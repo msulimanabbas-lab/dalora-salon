@@ -1,0 +1,7 @@
+node_modules
+.next
+.env*.local
+.env
+test-shots
+next-env.d.ts
+*.tsbuildinfo
