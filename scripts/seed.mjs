@@ -18,10 +18,12 @@ const today = localToday();
 const DEMO = 'صالون روز';
 
 await sql.begin(async tx => {
+  await tx`SELECT set_config('dalora.wipe', 'on', true)`; // lets the reset clear issued invoices (nothing else may)
   await tx`DELETE FROM salons WHERE name = ${DEMO}`;
+  // a test VAT number (15 digits, 3…3) so invoices are issued; replace with the salon's real one
   const [salon] = await tx`
-    INSERT INTO salons (name, area, phone, timezone, opens_min, closes_min, home_service, home_fee, travel_mins, deposit_pct, cancel_hours)
-    VALUES (${DEMO}, 'حي النرجس، الرياض', '+966112345678', ${TZ}, 600, 1380, true, 50, 30, 20, 24) RETURNING id`;
+    INSERT INTO salons (name, area, phone, timezone, opens_min, closes_min, home_service, home_fee, travel_mins, deposit_pct, cancel_hours, vat_number, address)
+    VALUES (${DEMO}, 'حي النرجس، الرياض', '+966112345678', ${TZ}, 600, 1380, true, 50, 30, 20, 24, '300000000000003', 'حي النرجس، الرياض') RETURNING id`;
   const S = salon.id;
 
   const full = (a, b, off = [5]) => Object.fromEntries([0, 1, 2, 3, 4, 5, 6].filter(d => !off.includes(d)).map(d => [String(d), [a, b]]));

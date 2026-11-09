@@ -9,7 +9,7 @@ export type Role = 'owner' | 'manager' | 'reception' | 'staff' | 'accountant';
 export type Ctx = {
   userId: string; userName: string; phone: string;
   salonId: string; salonName: string; tz: string;
-  role: Role; staffId: string | null;
+  role: Role; staffId: string | null; isDemo: boolean;
 };
 
 const COOKIE = 'dl_session';
@@ -118,7 +118,7 @@ export async function getCtx(): Promise<Ctx | null> {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
   const [r] = await sql`
-    SELECT u.id AS user_id, u.name AS user_name, u.phone, s.id AS salon_id, s.name AS salon_name, s.timezone,
+    SELECT u.id AS user_id, u.name AS user_name, u.phone, s.id AS salon_id, s.name AS salon_name, s.timezone, s.is_demo,
            m.role, m.staff_id
     FROM sessions se
     JOIN users u ON u.id = se.user_id
@@ -129,7 +129,7 @@ export async function getCtx(): Promise<Ctx | null> {
   return {
     userId: r.user_id, userName: r.user_name, phone: r.phone,
     salonId: r.salon_id, salonName: r.salon_name, tz: r.timezone,
-    role: r.role, staffId: r.staff_id,
+    role: r.role, staffId: r.staff_id, isDemo: r.is_demo,
   };
 }
 

@@ -10,6 +10,8 @@ import { findSlots, totalsOf } from '@/lib/availability';
 import { getSalon, getServices, getStaff, isDayClosed } from '@/lib/data';
 import { normalizePhone, sar } from '@/lib/format';
 import { isDay, todayIn, zoned } from '@/lib/time';
+import { issueInvoice, isVatNumber } from '@/lib/invoice';
+import { CATALOG } from '@/lib/catalog';
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
@@ -296,9 +298,32 @@ async function insertPayment(tx: Tx, ctx: Ctx, tz: string, p: PayIn) {
            VALUES (${ctx.salonId}, ${p.bookingId ?? null}, ${p.customerId ?? null}, ${p.method}, ${p.kind}, ${p.amount}, ${day}, ${p.note}, ${ctx.userId})`;
   if (p.bookingId) {
     const delta = p.kind === 'refund' ? -p.amount : p.amount;
-    await tx`UPDATE bookings SET paid = paid + ${delta} WHERE id = ${p.bookingId}`;
+    const [b] = await tx`UPDATE bookings SET paid = paid + ${delta} WHERE id = ${p.bookingId} RETURNING paid, total, status`;
+    // tax invoice: issued the moment the booking is fully paid; a refund on an invoiced booking issues a credit note
+    // (both only once the salon has entered its VAT number)
+    if (p.kind === 'refund') {
+      await issueInvoice(tx, { salonId: ctx.salonId, userId: ctx.userId, bookingId: p.bookingId, kind: 'credit', amount: p.amount, reason: p.note || 'استرجاع مبلغ' });
+    } else if (Number(b.paid) >= Number(b.total) - 0.001 && !['cancelled', 'no_show'].includes(b.status)) {
+      await issueInvoice(tx, { salonId: ctx.salonId, userId: ctx.userId, bookingId: p.bookingId, kind: 'invoice' });
+    }
   }
   await audit(tx, ctx, 'payment', p.bookingId ?? null, p.kind, { method: p.method, amount: p.amount });
+}
+
+/** For bookings paid in full before the salon added its VAT number, or anything that missed the automatic issue. */
+export async function issueInvoiceAction(bookingId: string): Promise<Result<{ number: string }>> {
+  return guard(async () => {
+    const ctx = await requireAction('takePayments');
+    if (!uuid.safeParse(bookingId).success) return fail('حجز غير صحيح');
+    const [b] = await sql`SELECT paid, total, status FROM bookings WHERE id = ${bookingId} AND salon_id = ${ctx.salonId}`;
+    if (!b) return fail('الحجز غير موجود.');
+    if (Number(b.paid) < Number(b.total) - 0.001) return fail('الفاتورة تنطلع بعد ما ينسدد المبلغ كامل.');
+    const out = await sql.begin(tx => issueInvoice(tx, { salonId: ctx.salonId, userId: ctx.userId, bookingId, kind: 'invoice' }));
+    if (!out) return fail('أضيفي الرقم الضريبي للصالون من الإعدادات أول.');
+    await audit(sql, ctx, 'booking', bookingId, 'invoiced', { number: out.number });
+    refresh();
+    return { ok: true, number: out.number };
+  });
 }
 
 const payInput = z.object({
@@ -522,6 +547,7 @@ const settingsInput = z.object({
   cancel_hours: z.number().int().min(0).max(168), deposit_pct: z.number().int().min(0).max(100), late_mins: z.number().int().min(0).max(120),
   lead_mins: z.number().int().min(0).max(1440), slot_step: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20), z.literal(30)]),
   home_service: z.boolean(), home_fee: z.number().min(0).max(10000), travel_mins: z.number().int().min(0).max(180),
+  vat_number: z.string().trim().max(15).default(''), cr_number: z.string().trim().max(20).default(''), address: z.string().trim().max(200).default(''),
 });
 export async function saveSettingsAction(input: z.input<typeof settingsInput>): Promise<Result> {
   return guard(async () => {
@@ -530,9 +556,11 @@ export async function saveSettingsAction(input: z.input<typeof settingsInput>): 
     if (!p.success) return fail('تأكدي من القيم.');
     const d = p.data;
     if (d.closes_min <= d.opens_min) return fail('وقت الإقفال لازم يكون بعد الفتح.');
+    if (d.vat_number && !isVatNumber(d.vat_number)) return fail('الرقم الضريبي 15 رقم، يبدأ بـ 3 وينتهي بـ 3.');
     await sql`UPDATE salons SET name=${d.name}, area=${d.area}, phone=${d.phone}, opens_min=${d.opens_min}, closes_min=${d.closes_min},
               cancel_hours=${d.cancel_hours}, deposit_pct=${d.deposit_pct}, late_mins=${d.late_mins}, lead_mins=${d.lead_mins}, slot_step=${d.slot_step},
-              home_service=${d.home_service}, home_fee=${d.home_fee}, travel_mins=${d.travel_mins} WHERE id=${ctx.salonId}`;
+              home_service=${d.home_service}, home_fee=${d.home_fee}, travel_mins=${d.travel_mins},
+              vat_number=${d.vat_number}, cr_number=${d.cr_number}, address=${d.address} WHERE id=${ctx.salonId}`;
     await audit(sql, ctx, 'salon', ctx.salonId, 'settings', d);
     refresh();
     return { ok: true };
@@ -555,6 +583,8 @@ export type BookingDetail = {
   history: { visits: number; noShows: number; lastVisit: string | null };
   dayClosed: boolean;
   salonName: string;
+  invoices: { id: string; kind: string; number: string; token: string; total: number }[];
+  vatReady: boolean;
 };
 export async function bookingDetailAction(id: string): Promise<Result<{ detail: BookingDetail }>> {
   return guard(async () => {
@@ -567,7 +597,7 @@ export async function bookingDetailAction(id: string): Promise<Result<{ detail: 
     if (!b) return fail('الحجز غير موجود.');
     if (ctx.role === 'staff' && b.staff_id !== ctx.staffId) return fail('هذا الحجز لموظفة ثانية.');
     const salon = await getSalon(ctx.salonId);
-    const [payments, log, [h], closed] = await Promise.all([
+    const [payments, log, [h], closed, invoices] = await Promise.all([
       sql`SELECT p.id, p.method, p.kind, p.amount, p.created_at AS at, COALESCE(u.name, '') AS by
           FROM payments p LEFT JOIN users u ON u.id = p.received_by WHERE p.booking_id = ${id} ORDER BY p.created_at`,
       sql`SELECT a.at, a.action, a.detail, COALESCE(u.name, '') AS by FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
@@ -576,6 +606,7 @@ export async function bookingDetailAction(id: string): Promise<Result<{ detail: 
                  max(starts_at) FILTER (WHERE status = 'done') AS last_visit
           FROM bookings WHERE customer_id = ${b.customer_id} AND id <> ${id}`,
       isDayClosed(ctx.salonId, todayIn(salon.timezone)),
+      sql`SELECT id, kind, number, share_token, total_incl FROM invoices WHERE booking_id = ${id} ORDER BY icv`,
     ]);
     const view = bookingView(b, salon.timezone);
     if (ctx.role === 'staff') view.customerPhone = ''; // staff see the name, not the number
@@ -588,6 +619,8 @@ export async function bookingDetailAction(id: string): Promise<Result<{ detail: 
         history: { visits: h.visits, noShows: h.no_shows, lastVisit: h.last_visit ? new Date(h.last_visit).toISOString() : null },
         dayClosed: closed,
         salonName: salon.name,
+        invoices: ctx.role === 'staff' ? [] : invoices.map(i => ({ id: i.id, kind: i.kind, number: i.number, token: i.share_token, total: Number(i.total_incl) })),
+        vatReady: isVatNumber(salon.vat_number),
       },
     };
   });
@@ -600,7 +633,7 @@ const setupInput = z.object({
   area: z.string().trim().max(120).default(''),
   ownerName: z.string().trim().min(1, 'اكتبي اسمك.').max(60),
   ownerPhone: z.string(),
-  demo: z.boolean(),
+  start: z.enum(['demo', 'catalog', 'empty']),
 });
 /** Only works while the database has no salon at all: it creates the first salon and its owner, then signs her in. */
 export async function setupAction(input: z.input<typeof setupInput>): Promise<Result> {
@@ -613,16 +646,63 @@ export async function setupAction(input: z.input<typeof setupInput>): Promise<Re
   const { startSession } = await import('@/lib/auth');
   const out = await sql.begin(async tx => {
     await tx`LOCK TABLE salons IN EXCLUSIVE MODE`;
-    const [{ n }] = await tx`SELECT count(*)::int AS n FROM salons`;
+    const [{ n }] = await tx`SELECT count(*)::int AS n FROM salons WHERE NOT is_demo`;
     if (n > 0) return null;
-    const [s] = await tx`INSERT INTO salons (name, area, timezone, home_service) VALUES (${p.data.salonName}, ${p.data.area}, ${tz}, ${p.data.demo}) RETURNING id`;
+    const [s] = await tx`INSERT INTO salons (name, area, timezone, home_service) VALUES (${p.data.salonName}, ${p.data.area}, ${tz}, ${p.data.start === 'demo'}) RETURNING id`;
     const [u] = await tx`INSERT INTO users (phone, name) VALUES (${phone}, ${p.data.ownerName})
                          ON CONFLICT (phone) DO UPDATE SET name = EXCLUDED.name RETURNING id`;
     await tx`INSERT INTO memberships (salon_id, user_id, role) VALUES (${s.id}, ${u.id}, 'owner')`;
-    if (p.data.demo) await seedDemo(tx, s.id, u.id, tz);
+    if (p.data.start === 'demo') await seedDemo(tx, s.id, u.id, tz);
+    if (p.data.start === 'catalog') await addCatalog(tx, s.id, CATALOG.flatMap(c => c.items.map(i => i.name)));
     return { salonId: s.id as string, userId: u.id as string };
   });
   if (!out) return fail('الصالون متسجّل من قبل. ادخلي من صفحة الدخول.');
   await startSession(out.userId, out.salonId);
   redirect('/schedule');
+}
+
+/* ======================= ready service list ======================= */
+
+async function addCatalog(tx: Tx, salonId: string, names: string[]) {
+  const have = new Set((await tx`SELECT name FROM services WHERE salon_id = ${salonId}`).map(r => r.name));
+  const [m] = await tx`SELECT COALESCE(max(sort), 0) AS n FROM services WHERE salon_id = ${salonId}`;
+  let sort = Number(m.n), added = 0;
+  for (const c of CATALOG) for (const i of c.items) {
+    if (!names.includes(i.name) || have.has(i.name)) continue;
+    // price left at 0 for the salon to fill in; nobody assigned yet, so it can't be booked until she sets it up
+    await tx`INSERT INTO services (salon_id, name, category, duration_min, buffer_min, price, home_ok, sort)
+             VALUES (${salonId}, ${i.name}, ${c.category}, ${i.dur}, ${i.buf}, 0, ${i.home}, ${++sort})`;
+    added++;
+  }
+  return added;
+}
+export async function addCatalogServicesAction(names: string[]): Promise<Result<{ added: number }>> {
+  return guard(async () => {
+    const ctx = await requireAction('catalog');
+    const list = z.array(z.string().max(80)).max(200).safeParse(names);
+    if (!list.success || !list.data.length) return fail('اختاري خدمة على الأقل.');
+    const added = await sql.begin(tx => addCatalog(tx, ctx.salonId, list.data));
+    await audit(sql, ctx, 'service', null, 'catalog_added', { added });
+    refresh();
+    return { ok: true, added };
+  });
+}
+
+/* ======================= demo ======================= */
+
+export async function demoEnterAction(role: string) {
+  const { ensureDemo, demoEnabled, DEMO_ROLES } = await import('@/lib/demoSalon');
+  if (!demoEnabled() || !(role in DEMO_ROLES)) redirect('/login');
+  const { startSession } = await import('@/lib/auth');
+  const { salonId, userId } = await ensureDemo(role as keyof typeof DEMO_ROLES);
+  await startSession(userId, salonId); // replaces the cookie; an interrupted switch never leaves you signed out
+  redirect(role === 'staff' ? '/my-day' : '/schedule');
+}
+export async function demoResetAction() {
+  const ctx = await getCtx();
+  const { ensureDemo } = await import('@/lib/demoSalon');
+  if (!ctx?.isDemo) redirect('/');
+  await ensureDemo('owner', true);
+  refresh();
+  redirect(ctx.role === 'staff' ? '/my-day' : '/schedule');
 }

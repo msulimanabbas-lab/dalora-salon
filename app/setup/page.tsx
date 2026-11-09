@@ -8,7 +8,7 @@ export const metadata = { title: 'إعداد الصالون' };
 export const dynamic = 'force-dynamic';
 
 export default async function SetupPage() {
-  const [{ n }] = await sql`SELECT count(*)::int AS n FROM salons`;
+  const [{ n }] = await sql`SELECT count(*)::int AS n FROM salons WHERE NOT is_demo`;
   if (n > 0) redirect('/login');
   const mode = loginMode();
   return (

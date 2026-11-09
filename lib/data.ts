@@ -6,6 +6,7 @@ export type Salon = {
   id: string; name: string; area: string; phone: string; timezone: string;
   opens_min: number; closes_min: number; cancel_hours: number; deposit_pct: number; late_mins: number;
   lead_mins: number; slot_step: number; vat_pct: number; home_service: boolean; home_fee: number; travel_mins: number;
+  vat_number: string; cr_number: string; address: string; is_demo: boolean;
 };
 export type Staff = {
   id: string; name: string; title: string; color: string; week: Record<string, [number, number]>;

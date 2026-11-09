@@ -3,7 +3,8 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ServiceView, StaffView } from '@/lib/views';
-import { saveServiceAction } from '@/app/actions';
+import { saveServiceAction, addCatalogServicesAction } from '@/app/actions';
+import { CATALOG } from '@/lib/catalog';
 import { sar } from '@/lib/format';
 import { fmtDuration } from '@/lib/time';
 import { Icon } from '@/components/Icon';
@@ -15,6 +16,9 @@ const blank: Svc = { id: '', name: '', category: '', durationMin: 60, bufferMin:
 
 export function ServicesClient({ services, staff }: { services: Svc[]; staff: StaffView[] }) {
   const [edit, setEdit] = useState<Svc | null>(null);
+  const [pick, setPick] = useState(false);
+  const unpriced = services.filter(s => s.active && s.price <= 0).length;
+  const unstaffed = services.filter(s => s.active && !s.staffIds.length).length;
   const groups = useMemo(() => {
     const m = new Map<string, Svc[]>();
     for (const s of services) { const k = s.category || 'بدون تصنيف'; m.set(k, [...(m.get(k) || []), s]); }
@@ -26,8 +30,18 @@ export function ServicesClient({ services, staff }: { services: Svc[]; staff: St
     <div className="stack">
       <div className="page-head">
         <div><h1>الخدمات</h1><p className="sub">المدة ووقت التجهيز هم اللي يحددون الأوقات المتاحة. أي تعديل يطبّق على الحجوزات الجديدة مباشرة.</p></div>
-        <button className="btn primary" onClick={() => setEdit({ ...blank, staffIds: staff.map(s => s.id) })}><Icon name="plus" />خدمة جديدة</button>
+        <div className="row tight">
+          <button className="btn" onClick={() => setPick(true)}>من القائمة الجاهزة</button>
+          <button className="btn primary" onClick={() => setEdit({ ...blank, staffIds: staff.map(s => s.id) })}><Icon name="plus" />خدمة جديدة</button>
+        </div>
       </div>
+      {(unpriced > 0 || unstaffed > 0) && (
+        <p className="notice warn">
+          {unpriced > 0 && <>{unpriced} خدمة بدون سعر. </>}
+          {unstaffed > 0 && <>{unstaffed} خدمة ما حددتي مين تقدّمها، وما تنحجز لين تحددين. </>}
+          اضغطي على الخدمة وكمّليها.
+        </p>
+      )}
       {services.length === 0 ? <div className="panel empty"><h3>ما فيه خدمات</h3><p>أضيفي أول خدمة مع مدتها وسعرها.</p></div> : groups.map(([cat, list]) => (
         <section key={cat} className="stack tight">
           <h2>{cat}</h2>
@@ -37,7 +51,7 @@ export function ServicesClient({ services, staff }: { services: Svc[]; staff: St
               <tbody>
                 {list.map(s => (
                   <tr key={s.id} className="link" onClick={() => setEdit(s)} style={s.active ? undefined : { opacity: .55 }}>
-                    <td><b>{s.name}</b>{s.homeOk && <span className="tag info" style={{ marginInlineStart: 6 }}>منزلي</span>}{!s.active && <span className="tag mute" style={{ marginInlineStart: 6 }}>موقوفة</span>}</td>
+                    <td><b>{s.name}</b>{s.homeOk && <span className="tag info" style={{ marginInlineStart: 6 }}>منزلي</span>}{!s.active && <span className="tag mute" style={{ marginInlineStart: 6 }}>موقوفة</span>}{s.active && s.price <= 0 && <span className="tag warn" style={{ marginInlineStart: 6 }}>بدون سعر</span>}</td>
                     <td className="num">{fmtDuration(s.durationMin)}</td>
                     <td className="num">{s.bufferMin ? `${s.bufferMin} د` : '—'}</td>
                     <td className="end num">{sar(s.price)}</td>
@@ -51,6 +65,7 @@ export function ServicesClient({ services, staff }: { services: Svc[]; staff: St
         </section>
       ))}
       {edit && <ServiceSheet svc={edit} staff={staff} cats={cats} onClose={() => setEdit(null)} />}
+      {pick && <CatalogSheet have={new Set(services.map(s => s.name))} onClose={() => setPick(false)} />}
     </div>
   );
 }
@@ -91,6 +106,46 @@ function ServiceSheet({ svc, staff, cats, onClose }: { svc: Svc; staff: StaffVie
       <label className="row spread"><span>متاحة كخدمة منزلية</span><input type="checkbox" className="switch" checked={v.homeOk} onChange={e => set({ homeOk: e.target.checked })} /></label>
       <label className="row spread"><span>متاحة للحجز</span><input type="checkbox" className="switch" checked={v.active} onChange={e => set({ active: e.target.checked })} /></label>
       {err && <p className="notice bad">{err}</p>}
+    </Sheet>
+  );
+}
+
+function CatalogSheet({ have, onClose }: { have: Set<string>; onClose: () => void }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [sel, setSel] = useState<string[]>([]);
+  const [err, setErr] = useState('');
+  const [pending, start] = useTransition();
+  const toggle = (n: string) => setSel(v => v.includes(n) ? v.filter(x => x !== n) : [...v, n]);
+  return (
+    <Sheet title="من القائمة الجاهزة" sub="اختاري اللي تقدّمينه. تنضاف بمددها، وتحددين السعر ومين تقدّمها بعدين." onClose={onClose}
+      foot={<button className="btn primary lg block" disabled={!sel.length || pending} onClick={() => start(async () => {
+        const r = await addCatalogServicesAction(sel);
+        if (!r.ok) { setErr(r.error); return; }
+        toast(`انضافت ${r.added} خدمة`); router.refresh(); onClose();
+      })}>{pending ? 'جاري الإضافة…' : sel.length ? `إضافة ${sel.length} خدمة` : 'اختاري الخدمات'}</button>}>
+      {err && <p className="notice bad">{err}</p>}
+      {CATALOG.map(c => {
+        const free = c.items.filter(i => !have.has(i.name));
+        const all = free.length > 0 && free.every(i => sel.includes(i.name));
+        return (
+          <section key={c.category} className="stack tight">
+            <div className="row spread">
+              <h3>{c.category}</h3>
+              {free.length > 0 && <button className="btn quiet sm" onClick={() => setSel(v => all ? v.filter(n => !free.some(i => i.name === n)) : [...new Set([...v, ...free.map(i => i.name)])])}>{all ? 'إلغاء الكل' : 'اختيار الكل'}</button>}
+            </div>
+            <div className="svc-list" style={{ maxHeight: 'none' }}>
+              {c.items.map(i => (
+                <label key={i.name} className="svc-opt" style={have.has(i.name) ? { opacity: .5, cursor: 'default' } : undefined}>
+                  <input type="checkbox" disabled={have.has(i.name)} checked={have.has(i.name) || sel.includes(i.name)} onChange={() => toggle(i.name)} />
+                  <span>{i.name} <span className="faint tiny">· {fmtDuration(i.dur)}</span></span>
+                  {have.has(i.name) && <span className="p tiny">موجودة</span>}
+                </label>
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </Sheet>
   );
 }

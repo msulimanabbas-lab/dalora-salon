@@ -16,6 +16,7 @@ export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: stri
     { key: 'sara', name: 'سارة', title: 'شعر وصبغات', color: '#8C6BA8', week: full(840, 1380), home: false, comm: 15 },
     { key: 'reem', name: 'ريم', title: 'ميكب آرتست', color: '#C99263', week: full(720, 1380, [2]), home: true, comm: 25 },
     { key: 'haya', name: 'هيا', title: 'أظافر', color: '#5E978A', week: full(600, 1260), home: false, comm: 15 },
+    { key: 'jawaher', name: 'جواهر', title: 'سبا ومساج', color: '#6F86A8', week: full(780, 1380, [6]), home: true, comm: 20 },
   ];
   const staff: Record<string, string> = {};
   let sort = 0;
@@ -35,6 +36,10 @@ export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: stri
     ['blow', 'سشوار', 'شعر', 45, 10, 120, false, ['sara']],
     ['nails', 'مناكير + بديكير', 'أظافر', 75, 10, 180, false, ['haya']],
     ['gel', 'أظافر جل', 'أظافر', 60, 10, 150, false, ['haya']],
+    ['hammam', 'حمام مغربي', 'سبا ومساج', 60, 20, 250, false, ['jawaher']],
+    ['royal', 'حمام مغربي ملكي', 'سبا ومساج', 90, 20, 380, false, ['jawaher']],
+    ['massage', 'مساج استرخاء', 'سبا ومساج', 60, 15, 300, true, ['jawaher']],
+    ['facial', 'تنظيف بشرة', 'بشرة', 60, 15, 220, false, ['jawaher', 'reem']],
   ];
   const svc: Record<string, { id: string; name: string; dur: number; buf: number; price: number; who: string[] }> = {};
   sort = 0;
@@ -52,13 +57,13 @@ export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: stri
               ${i === 0 ? 'تفضّل منى · رموش طول 11' : ''}, ${i % 6 === 0 ? ['VIP'] : []}) RETURNING id`;
     customers.push(c.id);
   }
-  const combos = [['lash'], ['lashfill'], ['brow'], ['lash', 'brow'], ['evening'], ['protein'], ['color'], ['blow'], ['nails'], ['gel'], ['nails', 'gel'], ['bride']];
+  const combos = [['lash'], ['lashfill'], ['brow'], ['lash', 'brow'], ['evening'], ['protein'], ['color'], ['blow'], ['nails'], ['gel'], ['nails', 'gel'], ['bride'], ['hammam'], ['royal'], ['massage'], ['hammam', 'massage'], ['facial']];
   let code = 41000;
   for (let off = -35; off <= 6; off++) {
     const day = addDays(today, off);
     const wd = String(weekdayOf(day));
     const next: Record<string, number> = {};
-    const n = off === 0 ? 12 : off > 0 ? Math.round(3 + rnd() * 5) : Math.round(7 + rnd() * 7);
+    const n = off === 0 ? 15 : off > 0 ? Math.round(3 + rnd() * 5) : Math.round(7 + rnd() * 7);
     let placed = 0;
     for (let k = 0; k < n * 4 && placed < n; k++) {
       const items = pick(combos).map(c => svc[c]);

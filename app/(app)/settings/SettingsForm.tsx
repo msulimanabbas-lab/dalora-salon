@@ -8,6 +8,7 @@ import { useToast } from '@/components/Toast';
 type S = {
   name: string; area: string; phone: string; opens_min: number; closes_min: number; cancel_hours: number; deposit_pct: number;
   late_mins: number; lead_mins: number; slot_step: 5 | 10 | 15 | 20 | 30; home_service: boolean; home_fee: number; travel_mins: number;
+  vat_number: string; cr_number: string; address: string;
 };
 
 export function SettingsForm({ initial }: { initial: S }) {
@@ -58,6 +59,19 @@ export function SettingsForm({ initial }: { initial: S }) {
           <div className="grid-2">
             {n('home_fee', 'رسوم الوصول', 'ر.س')}
             {n('travel_mins', 'وقت التنقّل (كل اتجاه)', 'دقيقة')}
+          </div>
+        </section>
+        <section className="panel panel-pad stack">
+          <h2>الفاتورة الضريبية</h2>
+          <p className="small muted">إذا الصالون مسجّل في ضريبة القيمة المضافة، اكتبي الرقم الضريبي. بعدها تنطلع فاتورة ضريبية مبسطة برمز QR تلقائياً أول ما يكتمل دفع أي حجز، وإشعار دائن إذا سجلتي استرجاع. الأسعار تُعتبر شاملة الضريبة 15%.</p>
+          <label className="field"><span>الرقم الضريبي</span>
+            <input id="set-vat" className="input num" dir="ltr" inputMode="numeric" maxLength={15} placeholder="3XXXXXXXXXXXXX3" value={v.vat_number}
+              onChange={e => setV({ ...v, vat_number: e.target.value.replace(/\D/g, '') })} />
+            {v.vat_number && !/^3\d{13}3$/.test(v.vat_number) && <span className="tiny" style={{ color: 'var(--warn)' }}>15 رقم، يبدأ بـ 3 وينتهي بـ 3</span>}
+          </label>
+          <div className="grid-2">
+            <label className="field"><span>السجل التجاري</span><input id="set-cr" className="input num" dir="ltr" value={v.cr_number} onChange={e => setV({ ...v, cr_number: e.target.value.replace(/\D/g, '') })} /></label>
+            <label className="field"><span>العنوان على الفاتورة</span><input id="set-addr" className="input" value={v.address} onChange={e => setV({ ...v, address: e.target.value })} placeholder="الحي، المدينة" /></label>
           </div>
         </section>
       </div>

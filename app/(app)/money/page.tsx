@@ -18,7 +18,7 @@ export default async function MoneyPage({ searchParams }: { searchParams: Promis
   const day = isDay(sp.d) ? sp.d : today;
   const from = zoned(day, 0, salon.timezone), to = zoned(addDays(day, 1), 0, salon.timezone);
 
-  const [payments, [close], due, history] = await Promise.all([
+  const [payments, [close], due, history, invoices] = await Promise.all([
     sql`SELECT p.id, p.method, p.kind, p.amount, p.created_at, p.booking_id, b.code, c.name AS customer, COALESCE(u.name,'') AS by
         FROM payments p LEFT JOIN bookings b ON b.id = p.booking_id LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN users u ON u.id = p.received_by
         WHERE p.salon_id = ${ctx.salonId} AND p.business_date = ${day} ORDER BY p.created_at DESC`,
@@ -29,7 +29,12 @@ export default async function MoneyPage({ searchParams }: { searchParams: Promis
           AND b.status NOT IN ('cancelled','no_show') AND b.total - b.paid > 0.001 ORDER BY b.starts_at`,
     sql`SELECT business_date, expected_cash, counted_cash, difference, card_total, online_total, transfer_total
         FROM day_closes WHERE salon_id = ${ctx.salonId} AND business_date < ${day} ORDER BY business_date DESC LIMIT 10`,
+    sql`SELECT id, kind, number, issued_at, buyer_name, total_incl, vat, share_token FROM invoices
+        WHERE salon_id = ${ctx.salonId} AND issued_at >= ${from} AND issued_at < ${to} ORDER BY icv`,
   ]);
+  const sgn = (i: { kind?: string }) => (i.kind === 'credit' ? -1 : 1);
+  const invVat = invoices.reduce((t, i) => t + sgn(i) * Number(i.vat), 0);
+  const invTotal = invoices.reduce((t, i) => t + sgn(i) * Number(i.total_incl), 0);
 
   const sign = (p: { kind: string; amount: number }) => (p.kind === 'refund' ? -1 : 1) * Number(p.amount);
   const by = (m: string) => payments.filter(p => p.method === m).reduce((s, p) => s + sign(p as never), 0);
@@ -99,6 +104,29 @@ export default async function MoneyPage({ searchParams }: { searchParams: Promis
                       </tr>
                     ))}
                   </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {invoices.length > 0 && (
+            <section className="stack tight">
+              <h2>الفواتير الضريبية</h2>
+              <div className="table-wrap">
+                <table className="t">
+                  <thead><tr><th>الرقم</th><th>الوقت</th><th>العميلة</th><th className="end">الضريبة</th><th className="end">الإجمالي</th></tr></thead>
+                  <tbody>
+                    {invoices.map(i => (
+                      <tr key={i.id}>
+                        <td><a href={`/i/${i.share_token}`} target="_blank" rel="noopener noreferrer" className="ltr num" style={{ textDecoration: 'none', fontWeight: 600 }}>{i.number}</a>
+                          {i.kind === 'credit' && <span className="tag bad" style={{ marginInlineStart: 6 }}>إشعار دائن</span>}</td>
+                        <td className="num">{fmtTime(localParts(new Date(i.issued_at), salon.timezone).min)}</td>
+                        <td>{i.buyer_name}</td>
+                        <td className="end num">{i.kind === 'credit' ? '− ' : ''}{sar(i.vat)}</td>
+                        <td className="end num">{i.kind === 'credit' ? '− ' : ''}{sar(i.total_incl)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot><tr><td colSpan={3}>الصافي</td><td className="end num">{sar(invVat)}</td><td className="end num">{sar(invTotal)}</td></tr></tfoot>
                 </table>
               </div>
             </section>

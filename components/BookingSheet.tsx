@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { BookingView, StaffView } from '@/lib/views';
-import { bookingDetailAction, setStatusAction, cancelBookingAction, addPaymentAction, confirmBookingAction, type BookingDetail } from '@/app/actions';
+import { bookingDetailAction, setStatusAction, cancelBookingAction, addPaymentAction, confirmBookingAction, issueInvoiceAction, type BookingDetail } from '@/app/actions';
 import { displayPhone, METHOD_LABEL, sar, SOURCE_LABEL, STATUS_LABEL, waLink } from '@/lib/format';
 import { fmtDay, fmtTime } from '@/lib/time';
 import { Icon } from './Icon';
@@ -17,7 +17,7 @@ const NEXT: Record<string, { to: string; label: string } | undefined> = {
   in_service: { to: 'done', label: 'انتهت الخدمة' },
 };
 const ACTION_LABEL: Record<string, string> = {
-  created: 'إنشاء الحجز', confirmed: 'أكدت الحضور', unconfirmed: 'إلغاء التأكيد', moved: 'تعديل الموعد', status: 'تغيير الحالة', cancelled: 'إلغاء', payment: 'دفعة', deposit: 'عربون', refund: 'استرجاع',
+  created: 'إنشاء الحجز', confirmed: 'أكدت الحضور', unconfirmed: 'إلغاء التأكيد', moved: 'تعديل الموعد', status: 'تغيير الحالة', cancelled: 'إلغاء', invoiced: 'إصدار فاتورة', payment: 'دفعة', deposit: 'عربون', refund: 'استرجاع',
 };
 
 export function BookingSheet({ id, staff, canEdit, canPay, canRefund, onClose, onEdit, version, staffMode = false }: {
@@ -170,6 +170,28 @@ export function BookingSheet({ id, staff, canEdit, canPay, canRefund, onClose, o
           </div>
         )}
         {!staffMode && d.dayClosed && owe > 0.001 && canPay && <p className="notice warn" style={{ margin: 12 }}>صندوق اليوم مقفل، فما يمديك تسجلين دفعات جديدة اليوم.</p>}
+        {!staffMode && d.invoices.length > 0 && (
+          <div className="panel-pad stack tight" style={{ borderTop: '1px solid var(--line)' }}>
+            {d.invoices.map(i => {
+              const url = typeof window === 'undefined' ? '' : `${window.location.origin}/i/${i.token}`;
+              return (
+                <div key={i.id} className="inv-row">
+                  <span><b>{i.kind === 'credit' ? 'إشعار دائن' : 'فاتورة ضريبية'}</b> <span className="ltr num faint small">{i.number}</span></span>
+                  <a className="btn sm" href={`/i/${i.token}`} target="_blank" rel="noopener noreferrer">عرض وطباعة</a>
+                  {b.customerPhone && <a className="btn sm" target="_blank" rel="noopener noreferrer"
+                    href={waLink(b.customerPhone, `${i.kind === 'credit' ? 'إشعار الاسترجاع' : 'فاتورتك'} من ${d.salonName}: ${url}`)}><Icon name="chat" />إرسال</a>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {!staffMode && canPay && d.invoices.every(i => i.kind !== 'invoice') && b.total > 0 && owe <= 0.001 && b.status !== 'cancelled' && b.status !== 'no_show' && (
+          <div className="panel-pad" style={{ borderTop: '1px solid var(--line)' }}>
+            {d.vatReady
+              ? <button className="btn sm" disabled={pending} onClick={() => run(() => issueInvoiceAction(b.id), 'انطلعت الفاتورة')}>إصدار فاتورة ضريبية</button>
+              : <p className="tiny faint">لإصدار فاتورة ضريبية: أضيفي الرقم الضريبي للصالون من الإعدادات.</p>}
+          </div>
+        )}
       </section>
 
       {!staffMode && canEdit && (b.status === 'booked' || b.status === 'arrived') && (

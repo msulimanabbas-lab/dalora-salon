@@ -67,6 +67,16 @@ async def main():
             await page.wait_for_timeout(800)
         paid_ok = await page.locator('.sheet .kv:has-text("المتبقي")').count() == 0
         check('payment clears the balance', paid_ok)
+
+        # ---- tax invoice: issued automatically on full payment, QR carries the five phase-1 fields ----
+        await page.wait_for_selector('.inv-row', timeout=5000)
+        href = await page.get_attribute('.inv-row a:has-text("عرض")', 'href')
+        ip = await ctx.new_page(); watch(ip)
+        await ip.goto(BASE + href); await ip.wait_for_selector('.inv-qr svg')
+        txt = await ip.inner_text('.inv')
+        check('invoice issued with number, VAT and QR', 'فاتورة ضريبية مبسطة' in txt and 'INV-' in txt and '300000000000003' in txt)
+        await ip.screenshot(path=f'{OUT}/05-invoice.png')
+        await ip.close()
         await page.keyboard.press('Escape')
 
         # ---- race: two desks book the same free slot at once ----
@@ -140,6 +150,24 @@ async def main():
         await op.screenshot(path=f'{OUT}/14-owner-phone-sheet.png')
         sw = await op.evaluate('document.documentElement.scrollWidth')
         check('owner phone has no sideways scroll', sw <= 390, str(sw))
+
+        # ---- demo: step in without a code, switch roles from the bar ----
+        dctx = await b.new_context(viewport={'width': 1440, 'height': 900}); dp = await dctx.new_page(); watch(dp)
+        await dp.goto(BASE + '/demo')
+        await dp.click('.demo-role:has-text("الاستقبال")'); await dp.wait_for_url(re.compile(r'/schedule'))
+        check('demo: reception lands on schedule with the demo bar', await dp.locator('.demo-bar').count() == 1)
+        await dp.click('.demo-bar button:has-text("المختصة")'); await dp.wait_for_url(re.compile(r'/my-day'))
+        check('demo: switch to the specialist', '/my-day' in dp.url)
+        await dp.click('.demo-bar button:has-text("صاحبة الصالون")'); await dp.wait_for_url(re.compile(r'/schedule'))
+        await dp.click('.demo-bar button:has-text("بيانات جديدة")'); await dp.wait_for_timeout(2500)
+        check('demo: fresh data keeps you signed in', '/schedule' in dp.url and await dp.locator('.demo-bar').count() == 1, dp.url)
+        await dp.goto(BASE + '/services'); await dp.click('button:has-text("من القائمة الجاهزة")')
+        await dp.click('.sheet h3:has-text("حناء") >> xpath=.. >> button:has-text("اختيار الكل")')
+        await dp.click('.sheet-foot button'); await dp.wait_for_selector('h2:has-text("حناء")')
+        check('ready list adds services without a price', await dp.locator('tr:has-text("حناء يدين") .tag.warn').count() >= 1)
+        await dp.goto(BASE + '/help'); await dp.wait_for_selector('.help-item')
+        check('help page lists guides for the role', await dp.locator('.help-item').count() >= 5)
+        await dctx.close()
 
         errs = [e for e in errors if 'favicon' not in e]
         check('no browser errors', not errs, ' | '.join(errs[:3]))

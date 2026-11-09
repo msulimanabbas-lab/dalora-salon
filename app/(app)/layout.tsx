@@ -5,6 +5,7 @@ import { Wordmark } from '@/components/Wordmark';
 import { RailNav, TabBar } from '@/components/Nav';
 import { ToastProvider } from '@/components/Toast';
 import { logoutAction } from '../actions';
+import { DemoBar } from '@/components/DemoBar';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requirePage();
@@ -25,7 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <Wordmark />
         <span className="salon">{ctx.salonName}</span>
       </header>
-      <main className="main"><ToastProvider>{children}</ToastProvider></main>
+      <main className="main">{ctx.isDemo && <DemoBar role={ctx.role} />}<ToastProvider>{children}</ToastProvider></main>
       <TabBar items={tabs} />
     </div>
   );
