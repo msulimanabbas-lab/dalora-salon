@@ -21,7 +21,12 @@ export function displayPhone(e164: string) {
 export const STATUS_LABEL: Record<string, string> = {
   booked: 'محجوز', arrived: 'وصلت', in_service: 'في الخدمة', done: 'انتهت', no_show: 'غياب', cancelled: 'ملغي',
 };
-export const SOURCE_LABEL: Record<string, string> = { app: 'التطبيق', phone: 'هاتف', walk_in: 'حضور مباشر', social: 'سوشل ميديا' };
+export const SOURCE_LABEL: Record<string, string> = { whatsapp: 'واتساب', phone: 'اتصال', walk_in: 'حضور مباشر', social: 'سوشل ميديا', app: 'التطبيق' };
+
+/** wa.me link that opens a chat with the customer, optionally with a message typed in */
+export function waLink(e164: string, text = '') {
+  return `https://wa.me/${e164.replace(/\D/g, '')}${text ? '?text=' + encodeURIComponent(text) : ''}`;
+}
 export const METHOD_LABEL: Record<string, string> = { cash: 'كاش', card: 'شبكة (مدى)', online: 'دفع إلكتروني', transfer: 'تحويل' };
 export const ROLE_LABEL: Record<string, string> = {
   owner: 'المالكة', manager: 'مديرة', reception: 'الاستقبال', staff: 'موظفة', accountant: 'المحاسبة',

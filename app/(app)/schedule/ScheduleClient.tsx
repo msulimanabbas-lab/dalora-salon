@@ -9,6 +9,7 @@ import { Icon } from '@/components/Icon';
 import { BookingSheet } from '@/components/BookingSheet';
 import { BookingForm, type FormSeed } from '@/components/BookingForm';
 import { useAutoRefresh } from '@/components/useAutoRefresh';
+import { NowStrip, statusLine } from '@/components/NowStrip';
 
 const PX = 1.2; // pixels per minute
 
@@ -57,6 +58,10 @@ export function ScheduleClient(props: {
         {canEdit && <button className="btn primary" onClick={() => startNew()}><Icon name="plus" />حجز جديد</button>}
       </div>
 
+      {isToday && staff.length > 0 && (
+        <NowStrip salon={salon} staff={staff} bookings={live} canEdit={canEdit} canPay={props.canPay} onOpen={id => setOpen({ kind: 'detail', id })} />
+      )}
+
       {staff.length === 0 ? (
         <div className="panel empty"><h3>ما فيه موظفات بعد</h3><p>أضيفي الموظفات وخدماتهن من صفحة الفريق، وبعدها يطلع الجدول هنا.</p></div>
       ) : (
@@ -68,6 +73,7 @@ export function ScheduleClient(props: {
               {(['booked', 'arrived', 'in_service', 'done', 'no_show'] as const).map(s => (
                 <span key={s}><i className={'st-' + s} />{STATUS_LABEL[s]}</span>
               ))}
+              <span><Icon name="check" className="ok-tick" />مؤكد</span>
               {canEdit && <span className="faint">اضغطي على أي وقت فاضي لحجز سريع</span>}
             </div>
           </div>
@@ -168,9 +174,9 @@ function Board({ day, salon, staff, bookings, timeOff, wd, canEdit, onOpen, onEm
                 const owe = b.total - b.paid;
                 return (
                   <button key={b.id} className={'blk st-' + b.status} style={{ top: y(b.startMin) + 1, height: hgt }} onClick={() => onOpen(b.id)}>
-                    <span className="nm">{b.location === 'home' && <Icon name="home" />}{b.customerName}</span>
+                    <span className="nm">{b.location === 'home' && <Icon name="home" />}{b.customerName}{b.status === 'booked' && b.confirmed && <Icon name="check" className="ok-tick" />}</span>
                     {hgt > 40 && <span className="sv">{b.items.map(i => i.name).join(' + ')}</span>}
-                    {hgt > 58 && <span className="tm">{fmtTime(b.startMin)} – {fmtTime(b.endMin)}</span>}
+                    {hgt > 58 && <span className="tm">{b.status === 'arrived' && b.arrivedMin != null ? `وصلت ${fmtTime(b.arrivedMin)}` : `${fmtTime(b.startMin)} – ${fmtTime(b.endMin)}`}</span>}
                     {hgt > 80 && owe > 0.001 && b.status !== 'no_show' && <span className="due num">باقي {sar(owe)}</span>}
                   </button>
                 );
@@ -198,7 +204,7 @@ function Agenda({ bookings, staff, onOpen }: { bookings: BookingView[]; staff: S
               <span className="nm">{b.location === 'home' && <Icon name="home" className="tiny" />}{b.customerName}</span>
               <span className="meta">{b.items.map(i => i.name).join(' + ')}</span>
               <span className="meta row tight" style={{ justifyContent: 'space-between' }}>
-                <span>{s?.name} · {STATUS_LABEL[b.status]}</span>
+                <span>{s?.name} · {statusLine(b)}</span>
                 {owe > 0.001 && b.status !== 'no_show' && <span className="num">باقي {sar(owe)}</span>}
               </span>
             </span>

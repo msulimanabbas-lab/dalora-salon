@@ -33,20 +33,26 @@ export function BookingForm({ seed, salon, staff, services, onClose, onDone }: {
   const [slots, setSlots] = useState<{ min: number; staffId: string }[] | null>(null);
   const [address, setAddress] = useState(b?.address ?? '');
   const [notes, setNotes] = useState(b?.notes ?? '');
-  const [source, setSource] = useState<'phone' | 'walk_in' | 'social'>('phone');
+  const [source, setSource] = useState<'whatsapp' | 'phone' | 'walk_in' | 'social'>('whatsapp');
+  const [svcQ, setSvcQ] = useState('');
   const [discount, setDiscount] = useState('');
   const [payNow, setPayNow] = useState<'none' | 'deposit' | 'full'>('none');
-  const [method, setMethod] = useState<'cash' | 'card' | 'online' | 'transfer'>('cash');
+  const [method, setMethod] = useState<'cash' | 'card' | 'online' | 'transfer'>('transfer'); // deposits on WhatsApp bookings usually arrive by bank transfer
   const [err, setErr] = useState('');
   const [nonce, setNonce] = useState(0);
+  const [showPast, setShowPast] = useState(false);
   const [pending, start] = useTransition();
 
   const visible = services.filter(s => location === 'salon' || s.homeOk);
   const byCat = useMemo(() => {
     const m = new Map<string, ServiceView[]>();
-    for (const s of visible) { const k = s.category || 'خدمات'; m.set(k, [...(m.get(k) || []), s]); }
+    const nq = norm(svcQ);
+    for (const s of visible) {
+      if (nq && !norm(s.name + ' ' + s.category).includes(nq)) continue;
+      const k = s.category || 'خدمات'; m.set(k, [...(m.get(k) || []), s]);
+    }
     return [...m.entries()];
-  }, [visible]);
+  }, [visible, svcQ]);
   const qualified = staff.filter(st => (location === 'salon' || st.worksHome) && svc.every(id => services.find(s => s.id === id)?.staffIds.includes(st.id)));
   const totals = svc.reduce((a, id) => { const s = services.find(x => x.id === id); return s ? { d: a.d + s.durationMin, p: a.p + s.price } : a; }, { d: 0, p: 0 });
   const homeFee = location === 'home' ? salon.homeFee : 0;
@@ -82,6 +88,10 @@ export function BookingForm({ seed, salon, staff, services, onClose, onDone }: {
     return () => { live = false; clearTimeout(t); };
   }, [svc.join(), staffId, day, location, nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // today: times that already passed stay folded away (still reachable for a walk-in entered late)
+  const cutoff = day === salon.today && !showPast ? salon.nowMin - 30 : -1;
+  const shownSlots = (slots ?? []).filter(s => s.min >= cutoff || s.min === min);
+  const hiddenPast = (slots?.length ?? 0) - shownSlots.length;
   const chosen = slots?.find(s => s.min === min);
   const chosenStaff = staff.find(s => s.id === chosen?.staffId);
   const wantedMissing = wanted.current != null && slots && !slots.some(s => s.min === wanted.current);
@@ -110,7 +120,7 @@ export function BookingForm({ seed, salon, staff, services, onClose, onDone }: {
   }
 
   return (
-    <Sheet title={editing ? 'تعديل الحجز' : 'حجز جديد'} sub={editing ? b!.customerName : 'من الاستقبال أو الهاتف'} onClose={onClose}
+    <Sheet title={editing ? 'تعديل الحجز' : 'حجز جديد'} sub={editing ? b!.customerName : undefined} onClose={onClose}
       foot={<>
         {err && <p className="notice bad" role="alert" style={{ position: 'absolute', insetInline: 20, bottom: '100%', marginBottom: 8 }}>{err}</p>}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -119,6 +129,15 @@ export function BookingForm({ seed, salon, staff, services, onClose, onDone }: {
         </div>
         <button className="btn primary lg" disabled={!ready || pending} onClick={submit}>{pending ? 'جاري الحفظ…' : editing ? 'حفظ التعديل' : 'تأكيد الحجز'}</button>
       </>}>
+
+      {!editing && (
+        <section className="row tight" aria-label="جاء الحجز من">
+          <span className="label" style={{ marginInlineEnd: 4 }}>جاء من</span>
+          {([['whatsapp', 'واتساب'], ['phone', 'اتصال'], ['walk_in', 'حضور'], ['social', 'سوشل']] as const).map(([k, l]) => (
+            <button key={k} className="chip" aria-pressed={source === k} onClick={() => setSource(k)}>{l}</button>
+          ))}
+        </section>
+      )}
 
       {/* customer */}
       {!editing && (
@@ -171,7 +190,18 @@ export function BookingForm({ seed, salon, staff, services, onClose, onDone }: {
       {/* services */}
       <section className="stack tight">
         <span className="label">الخدمات {svc.length > 0 && <span className="faint">({svc.length})</span>}</span>
+        {svc.length > 0 && (
+          <div className="chips">
+            {svc.map(id => { const x = services.find(v => v.id === id); return x && (
+              <button key={id} className="chip" aria-pressed="true" onClick={() => setSvc(v => v.filter(y => y !== id))} aria-label={`إزالة ${x.name}`}>{x.name} ×</button>
+            ); })}
+          </div>
+        )}
+        {visible.length > 10 && (
+          <input id="svc-q" className="input" placeholder="ابحثي عن خدمة…" value={svcQ} onChange={e => setSvcQ(e.target.value)} />
+        )}
         <div className="svc-list">
+          {byCat.length === 0 && <p className="small faint" style={{ padding: 12 }}>ما فيه خدمة بهالاسم.</p>}
           {byCat.map(([cat, list]) => (
             <div key={cat}>
               {byCat.length > 1 && <div className="svc-cat">{cat}</div>}
@@ -210,8 +240,10 @@ export function BookingForm({ seed, salon, staff, services, onClose, onDone }: {
             <>
               {wantedMissing && <p className="notice info small">الوقت {fmtTime(wanted.current!)} ما يكفي لهالخدمات أو صار مشغول. اختاري من المتاح.</p>}
               <div className="slots" role="group" aria-label="الأوقات المتاحة">
-                {slots.map(s => <button key={s.min} className="slot" aria-pressed={min === s.min} onClick={() => { setMin(s.min); wanted.current = null; }}>{fmtTime(s.min)}</button>)}
+                {shownSlots.map(s => <button key={s.min} className="slot" aria-pressed={min === s.min} onClick={() => { setMin(s.min); wanted.current = null; }}>{fmtTime(s.min)}</button>)}
               </div>
+              {shownSlots.length === 0 && <p className="small faint">ما بقى وقت فاضي اليوم.</p>}
+              {hiddenPast > 0 && <button className="btn quiet sm" style={{ alignSelf: 'flex-start' }} onClick={() => setShowPast(true)}>عرض الأوقات اللي فاتت ({hiddenPast})</button>}
             </>
           )}
       </section>
@@ -220,37 +252,38 @@ export function BookingForm({ seed, salon, staff, services, onClose, onDone }: {
         <label className="field"><span>العنوان</span><input id="f-addr" className="input" value={address} onChange={e => setAddress(e.target.value)} placeholder="الحي، الشارع، رقم البيت" /></label>
       )}
 
-      {!editing && (
-        <section className="grid-2">
-          <label className="field"><span>مصدر الحجز</span>
-            <select id="f-src" className="input" value={source} onChange={e => setSource(e.target.value as typeof source)}>
-              <option value="phone">هاتف</option><option value="walk_in">حضور مباشر</option><option value="social">سوشل ميديا</option>
-            </select>
-          </label>
-          <label className="field"><span>خصم (ر.س)</span>
-            <input id="f-disc" className="input num" inputMode="decimal" value={discount} onChange={e => setDiscount(e.target.value.replace(/[^\d.]/g, ''))} placeholder="0" />
-          </label>
-        </section>
-      )}
-
-      <label className="field"><span>ملاحظة على الحجز</span><textarea id="f-notes" className="input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="مثلاً: تبي نفس لون المرة الماضية" /></label>
-
-      {!editing && total > 0 && (
-        <section className="stack tight">
-          <span className="label">دفع الحين</span>
-          <div className="seg" role="group" aria-label="دفع الحين">
-            <button aria-pressed={payNow === 'none'} onClick={() => setPayNow('none')}>عند الحضور</button>
-            <button aria-pressed={payNow === 'deposit'} onClick={() => setPayNow('deposit')}>عربون {sar(deposit)}</button>
-            <button aria-pressed={payNow === 'full'} onClick={() => setPayNow('full')}>كامل</button>
-          </div>
-          {payNow !== 'none' && (
-            <div className="chips">
-              {(['cash', 'card', 'online', 'transfer'] as const).map(m => <button key={m} className="chip" aria-pressed={method === m} onClick={() => setMethod(m)}>{METHOD_LABEL[m]}</button>)}
-            </div>
+      <details className="more-box" open={!!b?.notes}>
+        <summary>{editing ? 'ملاحظة' : 'ملاحظة، خصم، عربون'}{!editing && (payNow !== 'none' || disc > 0 || notes) ? ' · فيه إضافات' : ''}</summary>
+        <div className="stack tight" style={{ paddingTop: 10 }}>
+          <label className="field"><span>ملاحظة على الحجز</span><textarea id="f-notes" className="input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="مثلاً: تبي نفس لون المرة الماضية" /></label>
+          {!editing && (
+            <label className="field"><span>خصم (ر.س)</span>
+              <input id="f-disc" className="input num" inputMode="decimal" value={discount} onChange={e => setDiscount(e.target.value.replace(/[^\d.]/g, ''))} placeholder="0" />
+            </label>
           )}
-        </section>
-      )}
+          {!editing && total > 0 && (
+            <>
+              <span className="label">دفعت شي مقدّم؟</span>
+              <div className="seg" role="group" aria-label="دفع مقدّم">
+                <button aria-pressed={payNow === 'none'} onClick={() => setPayNow('none')}>لا، عند الحضور</button>
+                <button aria-pressed={payNow === 'deposit'} onClick={() => setPayNow('deposit')}>عربون {sar(deposit)}</button>
+                <button aria-pressed={payNow === 'full'} onClick={() => setPayNow('full')}>كامل</button>
+              </div>
+              {payNow !== 'none' && (
+                <div className="chips">
+                  {(['transfer', 'cash', 'card', 'online'] as const).map(m => <button key={m} className="chip" aria-pressed={method === m} onClick={() => setMethod(m)}>{METHOD_LABEL[m]}</button>)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </details>
 
     </Sheet>
   );
+}
+
+/** loose Arabic match: ignore diacritics and the usual alef / taa marbuta / yaa spellings */
+function norm(t: string) {
+  return t.toLowerCase().replace(/[\u064B-\u0652\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').trim();
 }

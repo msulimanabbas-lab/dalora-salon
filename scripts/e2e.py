@@ -59,7 +59,7 @@ async def main():
             await page.click(f'.sheet-foot button:has-text("{label}")')
             await page.wait_for_timeout(700)
         st = await page.text_content('.steps .on')
-        check('status flow reaches done', st.strip() == 'انتهت', st)
+        check('status flow reaches done, each step timed', st.strip().startswith('انتهت') and len(await page.locator('.steps small').all()) == 3, st)
         if await page.locator('button:has-text("تسجيل دفع")').count():
             await page.click('button:has-text("تسجيل دفع")')
             await page.click('.seg button:has-text("شبكة")')

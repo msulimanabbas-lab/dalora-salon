@@ -4,6 +4,7 @@ import postgres from 'postgres';
 
 const sql = postgres(process.env.DATABASE_URL, { max: 1, onnotice: () => {} });
 const TZ = 'Asia/Riyadh'; // UTC+3, no DST
+const NOW = (() => { const n = new Date(Date.now() + 3 * 3600e3); return n.getUTCHours() * 60 + n.getUTCMinutes(); })(); // minutes since midnight in Riyadh
 const pad = n => String(n).padStart(2, '0');
 const localToday = () => { const d = new Date(Date.now() + 3 * 3600e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
 const addDays = (day, n) => { const [y, m, d] = day.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d + n)); return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`; };
@@ -105,11 +106,13 @@ await sql.begin(async tx => {
       if (start + dur + buf > hours[1]) continue;
       perStaffNext[st] = start + dur + buf + (rnd() < 0.55 ? 30 + Math.floor(rnd() * 3) * 30 : 0);
       const price = items.reduce((a, i) => a + i.price, 0);
-      const past = off < 0 || (off === 0 && start + dur < 15 * 60);
+      const past = off < 0 || (off === 0 && start + dur <= NOW);
       let status = 'booked';
       if (past) status = rnd() < 0.06 ? 'no_show' : rnd() < 0.05 ? 'cancelled' : 'done';
-      else if (off === 0 && start < 16 * 60) status = 'arrived';
-      const src = pick(['app', 'app', 'app', 'phone', 'phone', 'walk_in', 'social']);
+      // today follows the real clock: whoever's time has come is in the chair, whoever's due in 15 minutes just walked in
+      else if (off === 0 && start <= NOW) status = 'in_service';
+      else if (off === 0 && start - NOW <= 15) status = 'arrived';
+      const src = pick(['whatsapp', 'whatsapp', 'whatsapp', 'app', 'app', 'phone', 'walk_in', 'social']);
       const cust = pick(customers);
       const paidFull = status === 'done' || (rnd() < 0.35 && status !== 'cancelled');
       const deposit = !paidFull && status !== 'cancelled' && rnd() < 0.5 ? Math.round(price * 0.2) : 0;
@@ -133,6 +136,13 @@ await sql.begin(async tx => {
       made++; placed++;
     }
   }
+  // arrival times, so the waiting clock and the booking timeline have something to show
+  await tx`UPDATE bookings SET
+      arrived_at   = CASE WHEN status IN ('arrived', 'in_service', 'done') THEN LEAST(starts_at - interval '6 minutes', now()) END,
+      started_at   = CASE WHEN status IN ('in_service', 'done') THEN LEAST(starts_at + interval '2 minutes', now()) END,
+      finished_at  = CASE WHEN status = 'done' THEN ends_at END,
+      confirmed_at = CASE WHEN status <> 'cancelled' AND random() < 0.6 THEN starts_at - interval '1 day' END
+    WHERE salon_id = ${S}`;
   // close every past day so the money page has history
   for (let off = -35; off < 0; off++) {
     const day = addDays(today, off);

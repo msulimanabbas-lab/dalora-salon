@@ -1,6 +1,6 @@
 import 'server-only';
 import type { Tx } from './db';
-import { addDays, todayIn, weekdayOf, zoned } from './time';
+import { addDays, nowMinIn, todayIn, weekdayOf, zoned } from './time';
 
 /** Fills a salon with sample staff, services, customers and six weeks of bookings, for trying the system out. */
 export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: string) {
@@ -8,6 +8,7 @@ export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: stri
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const pick = <T,>(a: T[]) => a[Math.floor(rnd() * a.length)];
   const today = todayIn(tz);
+  const NOW = nowMinIn(tz);
 
   const full = (a: number, b: number, off = [5]) => Object.fromEntries([0, 1, 2, 3, 4, 5, 6].filter(d => !off.includes(d)).map(d => [String(d), [a, b]]));
   const staffRows = [
@@ -71,11 +72,13 @@ export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: stri
       if (start + dur + buf > hours[1]) continue;
       next[st] = start + dur + buf + (rnd() < 0.55 ? 30 + Math.floor(rnd() * 3) * 30 : 0);
       const price = items.reduce((a, i) => a + i.price, 0);
-      const past = off < 0 || (off === 0 && start + dur < 15 * 60);
+      const past = off < 0 || (off === 0 && start + dur <= NOW);
       let status = 'booked';
       if (past) status = rnd() < 0.06 ? 'no_show' : rnd() < 0.05 ? 'cancelled' : 'done';
-      else if (off === 0 && start < 16 * 60) status = 'arrived';
-      const src = pick(['app', 'app', 'app', 'phone', 'phone', 'walk_in', 'social']);
+      // today follows the real clock: whoever's time has come is in the chair, whoever's due in 15 minutes just walked in
+      else if (off === 0 && start <= NOW) status = 'in_service';
+      else if (off === 0 && start - NOW <= 15) status = 'arrived';
+      const src = pick(['whatsapp', 'whatsapp', 'whatsapp', 'app', 'app', 'phone', 'walk_in', 'social']);
       const cust = pick(customers);
       const paidFull = status === 'done' || (rnd() < 0.35 && status !== 'cancelled');
       const deposit = !paidFull && status !== 'cancelled' && rnd() < 0.5 ? Math.round(price * 0.2) : 0;
@@ -95,6 +98,13 @@ export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: stri
       placed++;
     }
   }
+  // arrival times, so the waiting clock and the booking timeline have something to show
+  await tx`UPDATE bookings SET
+      arrived_at   = CASE WHEN status IN ('arrived', 'in_service', 'done') THEN LEAST(starts_at - interval '6 minutes', now()) END,
+      started_at   = CASE WHEN status IN ('in_service', 'done') THEN LEAST(starts_at + interval '2 minutes', now()) END,
+      finished_at  = CASE WHEN status = 'done' THEN ends_at END,
+      confirmed_at = CASE WHEN status <> 'cancelled' AND random() < 0.6 THEN starts_at - interval '1 day' END
+    WHERE salon_id = ${salonId}`;
   for (let off = -35; off < 0; off++) {
     const day = addDays(today, off);
     const [t] = await tx`SELECT COALESCE(sum(amount) FILTER (WHERE method='cash'),0) AS cash, COALESCE(sum(amount) FILTER (WHERE method='card'),0) AS card,

@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { BookingView, StaffView } from '@/lib/views';
-import { bookingDetailAction, setStatusAction, cancelBookingAction, addPaymentAction, type BookingDetail } from '@/app/actions';
-import { displayPhone, METHOD_LABEL, sar, SOURCE_LABEL, STATUS_LABEL } from '@/lib/format';
+import { bookingDetailAction, setStatusAction, cancelBookingAction, addPaymentAction, confirmBookingAction, type BookingDetail } from '@/app/actions';
+import { displayPhone, METHOD_LABEL, sar, SOURCE_LABEL, STATUS_LABEL, waLink } from '@/lib/format';
 import { fmtDay, fmtTime } from '@/lib/time';
 import { Icon } from './Icon';
 import { Sheet } from './Sheet';
@@ -17,7 +17,7 @@ const NEXT: Record<string, { to: string; label: string } | undefined> = {
   in_service: { to: 'done', label: 'انتهت الخدمة' },
 };
 const ACTION_LABEL: Record<string, string> = {
-  created: 'إنشاء الحجز', moved: 'تعديل الموعد', status: 'تغيير الحالة', cancelled: 'إلغاء', payment: 'دفعة', deposit: 'عربون', refund: 'استرجاع',
+  created: 'إنشاء الحجز', confirmed: 'أكدت الحضور', unconfirmed: 'إلغاء التأكيد', moved: 'تعديل الموعد', status: 'تغيير الحالة', cancelled: 'إلغاء', payment: 'دفعة', deposit: 'عربون', refund: 'استرجاع',
 };
 
 export function BookingSheet({ id, staff, canEdit, canPay, canRefund, onClose, onEdit, version, staffMode = false }: {
@@ -81,17 +81,50 @@ export function BookingSheet({ id, staff, canEdit, canPay, canRefund, onClose, o
         </p>
       ) : (
         <div className="steps" aria-label="حالة الحجز">
-          {FLOW.map((f, i) => <span key={f} className={i === step ? 'on' : i < step ? 'past' : ''}>{STATUS_LABEL[f]}</span>)}
+          {FLOW.map((f, i) => {
+            const at = f === 'booked' ? null : f === 'arrived' ? b.arrivedMin : f === 'in_service' ? b.startedMin : b.finishedMin;
+            return (
+              <span key={f} className={i === step ? 'on' : i < step ? 'past' : ''}>
+                {f === 'booked' && b.confirmed ? 'مؤكد' : STATUS_LABEL[f]}
+                {at != null && i <= step && <small className="num">{fmtTime(at)}</small>}
+              </span>
+            );
+          })}
         </div>
       )}
 
       {b.allergies && <p className="notice warn"><b>تنبيه:</b> {b.allergies}</p>}
 
+      {!staffMode && b.customerPhone && b.status !== 'cancelled' && (
+        <div className="contact">
+          <span className="ltr num" style={{ userSelect: 'all' }}>{displayPhone(b.customerPhone)}</span>
+          <a className="btn sm" href={`tel:${b.customerPhone}`}><Icon name="call" />اتصال</a>
+          <a className="btn sm" href={waLink(b.customerPhone)} target="_blank" rel="noopener noreferrer"><Icon name="chat" />واتساب</a>
+        </div>
+      )}
+
+      {!staffMode && canEdit && b.status === 'booked' && (
+        b.confirmed ? (
+          <div className="confirm-line ok">
+            <Icon name="check" /><span>العميلة أكدت الحضور</span>
+            <button className="btn quiet sm" disabled={pending} onClick={() => run(() => confirmBookingAction(b.id, false), 'رجع غير مؤكد')}>تراجع</button>
+          </div>
+        ) : (
+          <div className="confirm-line">
+            <span>لسا ما أكدت الحضور</span>
+            <a className="btn sm" target="_blank" rel="noopener noreferrer"
+              href={waLink(b.customerPhone, `مرحبا ${b.customerName}، نذكّرك بموعدك في ${d.salonName} ${fmtDay(b.day)} الساعة ${fmtTime(b.startMin)} (${b.items.map(i => i.name).join(' + ')}). نرجو تأكيد حضورك بالرد على هالرسالة.`)}>
+              <Icon name="chat" />تذكير بالواتساب
+            </a>
+            <button className="btn sm" disabled={pending} onClick={() => run(() => confirmBookingAction(b.id, true), 'تم: العميلة أكدت')}>أكدت</button>
+          </div>
+        )
+      )}
+
       <section className="panel panel-pad stack tight">
         <div className="kv"><span>الموعد</span><span>{fmtDay(b.day)} · <span className="num">{fmtTime(b.startMin)} – {fmtTime(b.endMin)}</span></span></div>
         <div className="kv"><span>الموظفة</span><span>{s?.name || '—'}</span></div>
         <div className="kv"><span>المكان</span><span>{b.location === 'home' ? <>في البيت{b.address ? ` · ${b.address}` : ''}</> : 'في الصالون'}</span></div>
-        {!staffMode && <div className="kv"><span>الجوال</span><span className="ltr num" style={{ userSelect: 'all' }}>{displayPhone(b.customerPhone)}</span></div>}
         <div className="kv"><span>سجلها</span><span>{d.history.visits} زيارة{d.history.noShows ? <> · <span style={{ color: 'var(--bad)' }}>{d.history.noShows} غياب</span></> : ''}</span></div>
         {b.notes && <div className="kv"><span>ملاحظة</span><span>{b.notes}</span></div>}
         {b.customerNotes && <div className="kv"><span>عن العميلة</span><span>{b.customerNotes}</span></div>}
@@ -172,15 +205,15 @@ export function BookingSheet({ id, staff, canEdit, canPay, canRefund, onClose, o
         </section>
       )}
       {!staffMode && (
-        <section className="stack tight">
-          <h3>السجل</h3>
+        <details className="more-box">
+          <summary>سجل الحجز ({d.log.length})</summary>
           <div className="log">
             {d.log.map((l, k) => (
               <div key={k}><time>{new Date(l.at).toLocaleString('ar-SA-u-nu-latn', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</time>
                 <span>{ACTION_LABEL[l.action] || l.action}{l.action === 'status' && l.detail.to ? `: ${STATUS_LABEL[String(l.detail.to)]}` : ''}{l.by ? ` · ${l.by}` : ''}</span></div>
             ))}
           </div>
-        </section>
+        </details>
       )}
     </Sheet>
   );

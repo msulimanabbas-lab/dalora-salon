@@ -19,7 +19,8 @@ export type BookingRow = {
   id: string; code: string; staff_id: string; customer_id: string; customer_name: string; customer_phone: string;
   starts_at: Date; ends_at: Date; buffer_min: number; travel_min: number; status: string; source: string;
   location: string; address: string; subtotal: number; discount: number; home_fee: number; total: number; paid: number;
-  notes: string; cancel_reason: string; created_at: Date; items: { name: string; duration_min: number; price: number; service_id: string | null }[];
+  notes: string; cancel_reason: string; created_at: Date;
+  confirmed_at: Date | null; arrived_at: Date | null; started_at: Date | null; finished_at: Date | null; items: { name: string; duration_min: number; price: number; service_id: string | null }[];
   allergies: string; customer_notes: string;
 };
 
@@ -52,6 +53,7 @@ export async function getBookings(salonId: string, tz: string, fromDay: string, 
            c.allergies, c.notes AS customer_notes,
            b.starts_at, b.ends_at, b.buffer_min, b.travel_min, b.status, b.source, b.location, b.address,
            b.subtotal, b.discount, b.home_fee, b.total, b.paid, b.notes, b.cancel_reason, b.created_at,
+           b.confirmed_at, b.arrived_at, b.started_at, b.finished_at,
            COALESCE((SELECT json_agg(json_build_object('name', i.name, 'duration_min', i.duration_min, 'price', i.price, 'service_id', i.service_id) ORDER BY i.sort)
                      FROM booking_items i WHERE i.booking_id = b.id), '[]') AS items
     FROM bookings b JOIN customers c ON c.id = b.customer_id
@@ -67,6 +69,7 @@ export async function getBooking(salonId: string, id: string): Promise<BookingRo
            c.allergies, c.notes AS customer_notes,
            b.starts_at, b.ends_at, b.buffer_min, b.travel_min, b.status, b.source, b.location, b.address,
            b.subtotal, b.discount, b.home_fee, b.total, b.paid, b.notes, b.cancel_reason, b.created_at,
+           b.confirmed_at, b.arrived_at, b.started_at, b.finished_at,
            COALESCE((SELECT json_agg(json_build_object('name', i.name, 'duration_min', i.duration_min, 'price', i.price, 'service_id', i.service_id) ORDER BY i.sort)
                      FROM booking_items i WHERE i.booking_id = b.id), '[]') AS items
     FROM bookings b JOIN customers c ON c.id = b.customer_id

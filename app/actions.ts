@@ -94,7 +94,7 @@ const bookingInput = z.object({
   min: z.number().int().min(0).max(1439),
   location: z.enum(['salon', 'home']),
   address: z.string().max(300).default(''),
-  source: z.enum(['phone', 'walk_in', 'social', 'app']).default('phone'),
+  source: z.enum(['whatsapp', 'phone', 'walk_in', 'social', 'app']).default('whatsapp'),
   notes: z.string().max(500).default(''),
   discount: z.number().min(0).default(0),
   payNow: z.object({ method: z.enum(['cash', 'card', 'online', 'transfer']), amount: z.number().positive(), kind: z.enum(['payment', 'deposit']) }).optional(),
@@ -236,13 +236,34 @@ export async function setStatusAction(id: string, status: string): Promise<Resul
     if (!FLOW[b.status]?.includes(status)) return fail('ما يصير تنقلين الحجز لهالحالة.');
     try {
       await sql.begin(async tx => {
-        await tx`UPDATE bookings SET status = ${status as never} WHERE id = ${id}`;
+        // each step keeps the moment it happened; stepping back clears what hadn't really happened yet
+        await tx`UPDATE bookings SET status = ${status as never},
+                   arrived_at  = CASE WHEN ${status}::text = 'booked' THEN NULL
+                                      WHEN ${status}::text IN ('arrived', 'in_service', 'done') THEN COALESCE(arrived_at, now()) ELSE arrived_at END,
+                   started_at  = CASE WHEN ${status}::text IN ('booked', 'arrived') THEN NULL
+                                      WHEN ${status}::text IN ('in_service', 'done') THEN COALESCE(started_at, now()) ELSE started_at END,
+                   finished_at = CASE WHEN ${status}::text = 'done' THEN COALESCE(finished_at, now()) ELSE NULL END
+                 WHERE id = ${id}`;
         await audit(tx, ctx, 'booking', id, 'status', { from: b.status, to: status });
       });
     } catch (e) {
       if (pgCode(e) === EXCLUSION_VIOLATION) return fail('ما يصير ترجعينه، الوقت صار محجوز لعميلة ثانية.');
       throw e;
     }
+    refresh();
+    return { ok: true };
+  });
+}
+
+/** The customer confirmed she's coming (usually a WhatsApp reply). Tapping again undoes it. */
+export async function confirmBookingAction(id: string, confirmed: boolean): Promise<Result> {
+  return guard(async () => {
+    const ctx = await requireAction('editBookings');
+    if (!uuid.safeParse(id).success) return fail('حجز غير صحيح');
+    const r = await sql`UPDATE bookings SET confirmed_at = ${confirmed ? sql`now()` : null}
+                        WHERE id = ${id} AND salon_id = ${ctx.salonId} AND status IN ('booked', 'arrived') RETURNING id`;
+    if (!r.length) return fail('ما يصير، الحجز بدأ أو انتهى.');
+    await audit(sql, ctx, 'booking', id, confirmed ? 'confirmed' : 'unconfirmed');
     refresh();
     return { ok: true };
   });
@@ -533,6 +554,7 @@ export type BookingDetail = {
   log: { at: string; action: string; detail: Record<string, unknown>; by: string }[];
   history: { visits: number; noShows: number; lastVisit: string | null };
   dayClosed: boolean;
+  salonName: string;
 };
 export async function bookingDetailAction(id: string): Promise<Result<{ detail: BookingDetail }>> {
   return guard(async () => {
@@ -565,6 +587,7 @@ export async function bookingDetailAction(id: string): Promise<Result<{ detail: 
         log: log.map(l => ({ at: new Date(l.at).toISOString(), action: l.action, detail: l.detail, by: l.by })),
         history: { visits: h.visits, noShows: h.no_shows, lastVisit: h.last_visit ? new Date(h.last_visit).toISOString() : null },
         dayClosed: closed,
+        salonName: salon.name,
       },
     };
   });
