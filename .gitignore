@@ -5,3 +5,4 @@ node_modules
 test-shots
 next-env.d.ts
 *.tsbuildinfo
+__pycache__/
