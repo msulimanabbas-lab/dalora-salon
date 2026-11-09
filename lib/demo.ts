@@ -110,6 +110,7 @@ export async function seedDemo(tx: Tx, salonId: string, userId: string, tz: stri
       finished_at  = CASE WHEN status = 'done' THEN ends_at END,
       confirmed_at = CASE WHEN status <> 'cancelled' AND random() < 0.6 THEN starts_at - interval '1 day' END
     WHERE salon_id = ${salonId}`;
+  await tx`SELECT dalora_vary_sample_times(${salonId}, true)`; // real-looking start/finish times per specialist
   for (let off = -35; off < 0; off++) {
     const day = addDays(today, off);
     const [t] = await tx`SELECT COALESCE(sum(amount) FILTER (WHERE method='cash'),0) AS cash, COALESCE(sum(amount) FILTER (WHERE method='card'),0) AS card,

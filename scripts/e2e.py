@@ -84,7 +84,9 @@ async def main():
         ctx2 = await b.new_context(viewport={'width': 1440, 'height': 900})
         p2 = await ctx2.new_page(); watch(p2)
         await login(p2, '0500000001')
-        far = (datetime.datetime.utcnow() + datetime.timedelta(hours=3) + datetime.timedelta(days=10)).strftime('%Y-%m-%d')
+        fd = datetime.datetime.utcnow() + datetime.timedelta(hours=3) + datetime.timedelta(days=10)
+        if fd.weekday() == 4: fd += datetime.timedelta(days=1)   # Friday is the team's day off in the seed
+        far = fd.strftime('%Y-%m-%d')
         async def prepare(pg, cname):
             await pg.goto(BASE + f'/schedule?d={far}')
             await pg.click('button:has-text("حجز جديد")')
@@ -151,6 +153,14 @@ async def main():
         await op.screenshot(path=f'{OUT}/14-owner-phone-sheet.png')
         sw = await op.evaluate('document.documentElement.scrollWidth')
         check('owner phone has no sideways scroll', sw <= 390, str(sw))
+
+        # ---- monthly specialist report: a card per specialist, and her detail with every customer ----
+        await p2.goto(BASE + '/reports/staff'); await p2.wait_for_selector('.sr-card, .empty')
+        cards = await p2.locator('.sr-card').count()
+        check('specialist report lists the team', cards >= 3, str(cards))
+        if cards:
+            await p2.click('.sr-card >> nth=0'); await p2.wait_for_selector('h2:has-text("العميلات")')
+            check('specialist detail shows customers and services', await p2.locator('table.t tbody tr').count() >= 2)
 
         # ---- accounts: owner makes a reception login, she signs in with username + password and must pick her own ----
         await p2.goto(BASE + '/team'); await p2.click('button:has-text("إضافة حساب")')

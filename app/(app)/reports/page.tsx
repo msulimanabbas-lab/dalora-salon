@@ -85,6 +85,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     <div className="stack">
       <div className="page-head">
         <div><h1>التقارير</h1><p className="sub">{fmtShortDay(from)} – {fmtShortDay(to)} · {days.length} يوم</p></div>
+        <Link href="/reports/staff" className="btn primary" style={{ textDecoration: 'none' }}>تقرير المختصات الشهري</Link>
         <form className="row tight" action="/reports">
           <input type="date" name="from" defaultValue={from} className="input num" style={{ width: 'auto' }} aria-label="من" />
           <span className="faint">إلى</span>
@@ -113,7 +114,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       </section>
 
       <section className="stack tight">
-        <h2>الموظفات</h2>
+        <div className="row spread"><h2>المختصات</h2><Link href="/reports/staff" className="small" style={{ color: 'var(--rose-ink)' }}>التحليل الكامل لكل مختصة</Link></div>
         <div className="table-wrap">
           <table className="t">
             <thead><tr><th>الموظفة</th><th className="end">زيارات</th><th className="end">الإيراد</th><th>الإشغال</th><th className="end">غياب</th><th className="end">العمولة</th></tr></thead>

@@ -173,6 +173,7 @@ async function sampleBookings(tx: Tx, salonId: string, userId: string, tz: strin
     const pays = chunk.flatMap((r, k) => r.paid > 0 ? [{ salon_id: salonId, booking_id: byCode.get(r.code)!, customer_id: r.customer_id, method: meta[i + k].method, kind: 'payment', amount: r.paid, business_date: meta[i + k].day, received_by: userId }] : []);
     if (pays.length) await tx`INSERT INTO payments ${tx(pays, 'salon_id', 'booking_id', 'customer_id', 'method', 'kind', 'amount', 'business_date', 'received_by')}`;
   }
+  await tx`SELECT dalora_vary_sample_times(${salonId})`; // believable start/finish times for the report
   const made = rows.length;
   return made;
 }

@@ -145,6 +145,7 @@ await sql.begin(async tx => {
       finished_at  = CASE WHEN status = 'done' THEN ends_at END,
       confirmed_at = CASE WHEN status <> 'cancelled' AND random() < 0.6 THEN starts_at - interval '1 day' END
     WHERE salon_id = ${S}`;
+  await tx`SELECT dalora_vary_sample_times(${S}, true)`; // real-looking start/finish times per specialist
   // close every past day so the money page has history
   for (let off = -35; off < 0; off++) {
     const day = addDays(today, off);
