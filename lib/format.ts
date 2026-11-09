@@ -29,5 +29,5 @@ export function waLink(e164: string, text = '') {
 }
 export const METHOD_LABEL: Record<string, string> = { cash: 'كاش', card: 'شبكة (مدى)', online: 'دفع إلكتروني', transfer: 'تحويل' };
 export const ROLE_LABEL: Record<string, string> = {
-  owner: 'المالكة', manager: 'مديرة', reception: 'الاستقبال', staff: 'موظفة', accountant: 'المحاسبة',
+  owner: 'المالكة', manager: 'مديرة', reception: 'الاستقبال', staff: 'مختصة', accountant: 'المحاسبة',
 };

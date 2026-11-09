@@ -23,6 +23,10 @@ export function ScheduleClient(props: {
   const router = useRouter();
   const [open, setOpen] = useState<Open>(props.openId ? { kind: 'detail', id: props.openId } : props.seedCustomer ? { kind: 'form', seed: { mode: 'new', day: props.day, customer: props.seedCustomer } } : null);
   const [who, setWho] = useState<string>('all');
+  // big teams: show one specialty at a time on the board
+  const titles = useMemo(() => [...new Set(staff.map(s => s.title).filter(Boolean))], [staff]);
+  const [spec, setSpec] = useState<string>('all');
+  const shown = spec === 'all' ? staff : staff.filter(s => s.title === spec);
   useAutoRefresh(30_000);
 
   const wd = String(weekdayOf(day));
@@ -67,7 +71,13 @@ export function ScheduleClient(props: {
       ) : (
         <>
           <div className="show-desk">
-            <Board {...props} wd={wd} onOpen={id => setOpen({ kind: 'detail', id })}
+            {staff.length > 8 && titles.length > 1 && (
+              <div className="staff-filter" role="group" aria-label="التخصص">
+                <button className="chip" aria-pressed={spec === 'all'} onClick={() => setSpec('all')}>الكل ({staff.length})</button>
+                {titles.map(t => <button key={t} className="chip" aria-pressed={spec === t} onClick={() => setSpec(t)}>{t} ({staff.filter(s => s.title === t).length})</button>)}
+              </div>
+            )}
+            <Board {...props} staff={shown} wd={wd} onOpen={id => setOpen({ kind: 'detail', id })}
               onEmpty={(staffId, min) => canEdit && startNew({ staffId, min })} />
             <div className="legend">
               {(['booked', 'arrived', 'in_service', 'done', 'no_show'] as const).map(s => (

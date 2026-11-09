@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { getCtx } from '@/lib/auth';
+import { getCtx, loginMode } from '@/lib/auth';
 import { sql } from '@/lib/db';
 import { Wordmark } from '@/components/Wordmark';
 import { LoginForm } from './LoginForm';
@@ -23,7 +23,7 @@ export default async function LoginPage() {
       </section>
       <section className="login-form">
         <div style={{ width: 'min(380px, 100%)' }}>
-          <LoginForm />
+          <LoginForm phoneEnabled={loginMode() !== 'off'} />
           {demoEnabled() && <p className="small muted" style={{ marginTop: 22, textAlign: 'center' }}>تبي تشوف النظام قبل؟ <a href="/demo" style={{ color: 'var(--rose-ink)', fontWeight: 600 }}>جرّب النسخة التجريبية</a></p>}
         </div>
       </section>

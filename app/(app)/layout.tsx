@@ -8,7 +8,7 @@ import { logoutAction } from '../actions';
 import { DemoBar } from '@/components/DemoBar';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await requirePage();
+  const ctx = await requirePage(undefined, { allowMustChange: true });
   const { rail, tabs } = navFor(ctx);
   return (
     <div className="shell">
@@ -17,7 +17,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="salon">{ctx.salonName}</div>
         <RailNav items={rail} />
         <div className="me">
-          <div><b>{ctx.userName || 'حسابي'}</b></div>
+          <div><a href="/account" style={{ textDecoration: 'none' }}><b>{ctx.userName || 'حسابي'}</b></a></div>
           <div className="faint tiny">{ROLE_LABEL[ctx.role]}</div>
           <form action={logoutAction} style={{ marginTop: 6 }}><button>تسجيل الخروج</button></form>
         </div>

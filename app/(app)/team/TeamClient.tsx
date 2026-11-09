@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { saveStaffAction, addMemberAction, setMemberActiveAction, addTimeOffAction, removeTimeOffAction } from '@/app/actions';
+import { saveStaffAction, addMemberAction, setMemberActiveAction, addTimeOffAction, removeTimeOffAction, resetPasswordAction } from '@/app/actions';
 import { displayPhone, ROLE_LABEL } from '@/lib/format';
 import { fmtDay, fmtTime, hhmm, parseHhmm, WEEKDAYS } from '@/lib/time';
 import { Icon } from '@/components/Icon';
@@ -11,7 +11,8 @@ import { useToast } from '@/components/Toast';
 
 type St = { id: string; name: string; title: string; color: string; week: Record<string, [number, number]>; worksHome: boolean; commission: number; active: boolean };
 type Sv = { id: string; name: string; staffIds: string[]; active: boolean };
-type Mb = { id: string; role: string; active: boolean; staffId: string | null; name: string; phone: string; me: boolean };
+type Mb = { id: string; role: string; active: boolean; staffId: string | null; name: string; phone: string | null; username: string | null; me: boolean };
+type Cred = { name: string; username: string; password: string };
 type Off = { id: string; staffId: string; day: string; from: number; to: number; reason: string };
 const COLORS = ['#B9708A', '#8C6BA8', '#C99263', '#5E978A', '#6F84B8', '#C0636F', '#7E8A4E', '#A0705A'];
 const ORDER = [6, 0, 1, 2, 3, 4, 5]; // Saturday first, as Saudi weeks are usually written
@@ -23,6 +24,7 @@ export function TeamClient({ today, opens, closes, staff, services, members, tim
   const toast = useToast();
   const [edit, setEdit] = useState<St | null>(null);
   const [adding, setAdding] = useState(false);
+  const [cred, setCred] = useState<Cred | null>(null);
   const [offFor, setOffFor] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -85,20 +87,25 @@ export function TeamClient({ today, opens, closes, staff, services, members, tim
       {canTeam && (
         <section className="stack tight">
           <div className="row spread"><h2>الحسابات والصلاحيات</h2><button className="btn sm" onClick={() => setAdding(true)}><Icon name="plus" />إضافة حساب</button></div>
-          <p className="small muted">كل شخص يدخل برقم جواله. الموظفة تشوف مواعيدها بس، والاستقبال يدير الحجوزات والكاش، والمحاسبة تشوف المال والتقارير.</p>
+          <p className="small muted">كل شخص له اسم مستخدم وكلمة مرور خاصة فيه. المختصة تشوف مواعيدها بس، والاستقبال يدير الحجوزات والكاش، والمحاسبة تشوف المال والتقارير.</p>
           <div className="table-wrap">
             <table className="t">
-              <thead><tr><th>الاسم</th><th>الجوال</th><th>الدور</th><th></th></tr></thead>
+              <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الدور</th><th></th></tr></thead>
               <tbody>
                 {members.map(m => (
                   <tr key={m.id} style={m.active ? undefined : { opacity: .55 }}>
                     <td><b>{m.name}</b>{m.me && <span className="faint small"> (أنتِ)</span>}{m.staffId && <div className="tiny faint">مرتبط بـ {staff.find(s => s.id === m.staffId)?.name}</div>}</td>
-                    <td><span className="ltr num">{displayPhone(m.phone)}</span></td>
+                    <td><span className="ltr">{m.username || '—'}</span>{m.phone && <div className="tiny faint ltr num">{displayPhone(m.phone)}</div>}</td>
                     <td>{ROLE_LABEL[m.role]}</td>
-                    <td className="end">{!m.me && m.role !== 'owner' && (
-                      <button className="btn quiet sm" disabled={pending} onClick={() => start(async () => {
-                        const r = await setMemberActiveAction(m.id, !m.active); if (!r.ok) toast(r.error); else { toast(m.active ? 'انوقف الحساب' : 'انفعّل الحساب'); router.refresh(); }
-                      })}>{m.active ? 'إيقاف' : 'تفعيل'}</button>
+                    <td className="end">{!m.me && (
+                      <span className="row tight" style={{ justifyContent: 'flex-end' }}>
+                        {m.active && <button className="btn quiet sm" disabled={pending} onClick={() => start(async () => {
+                          const r = await resetPasswordAction(m.id); if (!r.ok) toast(r.error); else { setCred({ name: m.name, username: r.username, password: r.password }); router.refresh(); }
+                        })}>كلمة مرور جديدة</button>}
+                        {m.role !== 'owner' && <button className="btn quiet sm" disabled={pending} onClick={() => start(async () => {
+                          const r = await setMemberActiveAction(m.id, !m.active); if (!r.ok) toast(r.error); else { toast(m.active ? 'انوقف الحساب' : 'انفعّل الحساب'); router.refresh(); }
+                        })}>{m.active ? 'إيقاف' : 'تفعيل'}</button>}
+                      </span>
                     )}</td>
                   </tr>
                 ))}
@@ -109,7 +116,8 @@ export function TeamClient({ today, opens, closes, staff, services, members, tim
       )}
 
       {edit && <StaffSheet st={edit} services={services} onClose={() => setEdit(null)} />}
-      {adding && <MemberSheet staff={staff} onClose={() => setAdding(false)} />}
+      {adding && <MemberSheet staff={staff} onClose={() => setAdding(false)} onCreated={c => { setAdding(false); setCred(c); }} />}
+      {cred && <CredSheet cred={cred} onClose={() => setCred(null)} />}
     </div>
   );
 }
@@ -193,29 +201,29 @@ function TimeOffForm({ staffId, today, opens, closes, onDone }: { staffId: strin
   );
 }
 
-function MemberSheet({ staff, onClose }: { staff: St[]; onClose: () => void }) {
+function MemberSheet({ staff, onClose, onCreated }: { staff: St[]; onClose: () => void; onCreated: (c: Cred) => void }) {
   const router = useRouter();
-  const toast = useToast();
-  const [v, setV] = useState<{ name: string; phone: string; role: 'manager' | 'reception' | 'staff' | 'accountant'; staffId: string }>({ name: '', phone: '', role: 'reception', staffId: '' });
+  const [v, setV] = useState<{ name: string; username: string; phone: string; role: 'manager' | 'reception' | 'staff' | 'accountant'; staffId: string }>({ name: '', username: '', phone: '', role: 'reception', staffId: '' });
   const [err, setErr] = useState('');
   const [pending, start] = useTransition();
   const ROLES = [
-    ['reception', 'الاستقبال', 'الجدول والحجوزات والعميلات واستلام الكاش وإقفال اليوم'],
-    ['staff', 'موظفة', 'مواعيدها بس، وتغيّر حالتها (وصلت، بدأت، انتهت)'],
+    ['reception', 'الاستقبال', 'الجدول والحجوزات والعميلات واستلام الدفع وإقفال اليوم'],
+    ['staff', 'مختصة', 'مواعيدها بس، وتغيّر حالتها (بدأت، انتهت)'],
     ['manager', 'مديرة', 'كل شي ما عدا الإعدادات والحسابات'],
     ['accountant', 'المحاسبة', 'المال والتقارير، وعرض الجدول'],
   ] as const;
   return (
-    <Sheet title="إضافة حساب" onClose={onClose}
+    <Sheet title="إضافة حساب" sub="كلمة المرور يطلعها النظام، وتتغير أول ما تدخل." onClose={onClose}
       foot={<button className="btn primary lg block" disabled={pending} onClick={() => start(async () => {
         setErr('');
-        const r = await addMemberAction({ name: v.name, phone: v.phone, role: v.role, staffId: v.role === 'staff' ? v.staffId || undefined : undefined });
+        const r = await addMemberAction({ name: v.name, username: v.username, phone: v.phone, role: v.role, staffId: v.role === 'staff' ? v.staffId || undefined : undefined });
         if (!r.ok) { setErr(r.error); return; }
-        toast('انضاف الحساب. تقدر تدخل برقم جوالها الحين'); router.refresh(); onClose();
+        router.refresh(); onCreated({ name: v.name, username: r.username, password: r.password });
       })}>{pending ? 'جاري الحفظ…' : 'إضافة'}</button>}>
+      <label className="field"><span>الاسم</span><input id="m-name" className="input" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} autoFocus /></label>
       <div className="grid-2">
-        <label className="field"><span>الاسم</span><input id="m-name" className="input" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} autoFocus /></label>
-        <label className="field"><span>الجوال</span><input id="m-phone" className="input num" dir="ltr" inputMode="tel" placeholder="05XXXXXXXX" value={v.phone} onChange={e => setV({ ...v, phone: e.target.value })} /></label>
+        <label className="field"><span>اسم المستخدم (إنجليزي)</span><input id="m-user" className="input" dir="ltr" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="reem.reception" value={v.username} onChange={e => setV({ ...v, username: e.target.value.toLowerCase().replace(/\s/g, '') })} /></label>
+        <label className="field"><span>الجوال (اختياري)</span><input id="m-phone" className="input num" dir="ltr" inputMode="tel" placeholder="05XXXXXXXX" value={v.phone} onChange={e => setV({ ...v, phone: e.target.value })} /></label>
       </div>
       <div className="field"><span>الدور</span>
         <div className="stack tight">
@@ -228,14 +236,30 @@ function MemberSheet({ staff, onClose }: { staff: St[]; onClose: () => void }) {
         </div>
       </div>
       {v.role === 'staff' && (
-        <label className="field"><span>مين هي من الموظفات؟</span>
+        <label className="field"><span>مين هي من المختصات؟</span>
           <select id="m-staff" className="input" value={v.staffId} onChange={e => setV({ ...v, staffId: e.target.value })}>
             <option value="">اختاري</option>
-            {staff.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {staff.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.name}{s.title ? ` · ${s.title}` : ''}</option>)}
           </select>
         </label>
       )}
       {err && <p className="notice bad">{err}</p>}
+    </Sheet>
+  );
+}
+
+/** The one time a generated password is visible: copy it now or make a new one later. */
+function CredSheet({ cred, onClose }: { cred: Cred; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const text = `دخولك على Dalora\nالرابط: ${typeof window === 'undefined' ? '' : window.location.origin}/login\nاسم المستخدم: ${cred.username}\nكلمة المرور: ${cred.password}\n(تتغير أول ما تدخلين)`;
+  return (
+    <Sheet title={`حساب ${cred.name}`} sub="كلمة المرور تطلع هنا مرة وحدة. انسخيها وأرسليها لها." onClose={onClose}
+      foot={<button className="btn primary lg block" onClick={async () => { try { await navigator.clipboard.writeText(text); setCopied(true); } catch { setCopied(false); } }}>{copied ? 'انسخت ✓' : 'نسخ بيانات الدخول'}</button>}>
+      <div className="panel panel-pad stack tight cred">
+        <div className="kv"><span>اسم المستخدم</span><b className="ltr">{cred.username}</b></div>
+        <div className="kv"><span>كلمة المرور</span><b className="ltr num" style={{ userSelect: 'all' }}>{cred.password}</b></div>
+      </div>
+      <p className="small muted">أول ما تدخل يطلب منها النظام تختار كلمة مرور خاصة فيها. إذا نسيتها، اضغطي "كلمة مرور جديدة" جنب اسمها.</p>
     </Sheet>
   );
 }

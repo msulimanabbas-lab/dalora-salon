@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { requestCodeAction, verifyCodeAction } from '../actions';
+import { requestCodeAction, verifyCodeAction, passwordLoginAction } from '../actions';
 
-export function LoginForm() {
+export function LoginForm({ phoneEnabled }: { phoneEnabled: boolean }) {
+  const [mode, setMode] = useState<'password' | 'phone'>('password');
+  const [user, setUser] = useState('');
+  const [pw, setPw] = useState('');
   const [step, setStep] = useState<'phone' | 'code'>('phone');
   const [phone, setPhone] = useState('');
   const [e164, setE164] = useState('');
@@ -31,6 +34,36 @@ export function LoginForm() {
     });
   }
 
+  function signIn(ev: React.FormEvent) {
+    ev.preventDefault();
+    setError('');
+    start(async () => {
+      const r = await passwordLoginAction(user, pw);
+      if (r && !r.ok) setError(r.error);
+    });
+  }
+
+  if (mode === 'password') return (
+    <form onSubmit={signIn} noValidate>
+      <div>
+        <h1>أهلاً فيك</h1>
+        <p className="muted" style={{ marginTop: 6 }}>ادخلي باسم المستخدم وكلمة المرور اللي أعطتك إياها صاحبة الصالون.</p>
+      </div>
+      <label className="field">
+        <span>اسم المستخدم</span>
+        <input id="username" className="input" dir="ltr" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+          value={user} onChange={e => setUser(e.target.value)} required autoFocus />
+      </label>
+      <label className="field">
+        <span>كلمة المرور</span>
+        <input id="password" className="input" type="password" dir="ltr" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} required />
+      </label>
+      {error && <p className="notice bad" role="alert">{error}</p>}
+      <button className="btn primary lg" disabled={pending || !user.trim() || !pw}>{pending ? 'جاري الدخول…' : 'دخول'}</button>
+      {phoneEnabled && <button type="button" className="btn quiet" onClick={() => { setMode('phone'); setError(''); }}>الدخول برقم الجوال</button>}
+    </form>
+  );
+
   if (step === 'phone') return (
     <form onSubmit={sendCode} noValidate>
       <div>
@@ -46,6 +79,7 @@ export function LoginForm() {
       <button className="btn primary lg" disabled={pending || phone.replace(/\D/g, '').length < 9}>
         {pending ? 'جاري الإرسال…' : 'أرسلي رمز الدخول'}
       </button>
+      <button type="button" className="btn quiet" onClick={() => { setMode('password'); setError(''); }}>الدخول باسم المستخدم</button>
     </form>
   );
 

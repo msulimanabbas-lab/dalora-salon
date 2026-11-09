@@ -1,6 +1,6 @@
 """End-to-end check of the main flows against a running server with the demo seed.
 Usage: python3 scripts/e2e.py  (expects http://localhost:3000)"""
-import asyncio, re, os
+import asyncio, re, os, datetime
 from playwright.async_api import async_playwright
 
 BASE = os.environ.get('BASE', 'http://localhost:3000')
@@ -12,6 +12,7 @@ def check(name, ok, info=''):
 
 async def login(page, phone):
     await page.goto(BASE + '/login')
+    await page.click('button:has-text("الدخول برقم الجوال")')
     await page.fill('#phone', phone)
     await page.click('button:has-text("أرسلي رمز الدخول")')
     await page.wait_for_selector('#code')
@@ -150,6 +151,24 @@ async def main():
         await op.screenshot(path=f'{OUT}/14-owner-phone-sheet.png')
         sw = await op.evaluate('document.documentElement.scrollWidth')
         check('owner phone has no sideways scroll', sw <= 390, str(sw))
+
+        # ---- accounts: owner makes a reception login, she signs in with username + password and must pick her own ----
+        await p2.goto(BASE + '/team'); await p2.click('button:has-text("إضافة حساب")')
+        uname = 'e2e.r' + str(int(datetime.datetime.now().timestamp()))[-6:]
+        await p2.fill('#m-name', 'استقبال تجربة'); await p2.fill('#m-user', uname)
+        await p2.click('.sheet-foot button:has-text("إضافة")'); await p2.wait_for_selector('.cred')
+        pw = (await p2.inner_text('.cred .kv:has-text("كلمة المرور") b')).strip()
+        check('owner gets a one-time password for the new account', len(pw) == 9, pw)
+        lc = await b.new_context(viewport={'width': 1440, 'height': 900}); lp = await lc.new_page(); watch(lp)
+        await lp.goto(BASE + '/login'); await lp.fill('#username', uname); await lp.fill('#password', 'wrong-pass')
+        await lp.click('button:has-text("دخول")'); await lp.wait_for_selector('.notice.bad')
+        await lp.fill('#password', pw); await lp.click('button:has-text("دخول")'); await lp.wait_for_url(re.compile(r'/account'))
+        check('generated password forces a new one', 'first=1' in lp.url)
+        await lp.goto(BASE + '/schedule'); await lp.wait_for_url(re.compile(r'/account'))
+        await lp.fill('#pw-current', pw); await lp.fill('#pw-next', 'NewPass123'); await lp.fill('#pw-again', 'NewPass123')
+        await lp.click('button:has-text("حفظ")'); await lp.wait_for_url(re.compile(r'/schedule'))
+        check('after choosing her password she reaches the schedule', '/schedule' in lp.url, lp.url)
+        await lc.close()
 
         # ---- demo: step in without a code, switch roles from the bar ----
         dctx = await b.new_context(viewport={'width': 1440, 'height': 900}); dp = await dctx.new_page(); watch(dp)

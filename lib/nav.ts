@@ -12,6 +12,7 @@ export function navFor(ctx: Ctx): { rail: NavItem[]; tabs: NavItem[]; more: NavI
   if (can(ctx, 'catalog')) rail.push({ href: '/team', label: 'الفريق', icon: 'team', group: 'إعداد الصالون' });
   if (can(ctx, 'settings')) rail.push({ href: '/settings', label: 'الإعدادات', icon: 'settings', group: 'إعداد الصالون' });
   rail.push({ href: '/help', label: 'المساعدة', icon: 'help', group: 'الدعم' });
+  rail.push({ href: '/account', label: 'حسابي', icon: 'me', group: 'الدعم' });
   const main = rail.filter(i => !i.group);
   const extra = rail.filter(i => i.group);
   const tabs = main.slice(0, extra.length ? 4 : 5);

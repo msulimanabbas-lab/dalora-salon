@@ -4,10 +4,11 @@ import { redirect } from 'next/navigation';
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { sql } from './db';
 import { sendSms } from './sms';
+import { verifyPassword } from './password';
 
 export type Role = 'owner' | 'manager' | 'reception' | 'staff' | 'accountant';
 export type Ctx = {
-  userId: string; userName: string; phone: string;
+  userId: string; userName: string; phone: string | null; username: string | null; mustChange: boolean;
   salonId: string; salonName: string; tz: string;
   role: Role; staffId: string | null; isDemo: boolean;
 };
@@ -95,6 +96,31 @@ export async function verifyCode(phone: string, code: string): Promise<{ ok: tru
   return { ok: true };
 }
 
+/* ---------------- username + password ---------------- */
+
+const LOCK_AFTER = 5, LOCK_MINUTES = 10;
+
+export async function passwordLogin(usernameRaw: string, password: string): Promise<{ ok: true; mustChange: boolean } | { ok: false; error: string }> {
+  const username = usernameRaw.trim().toLowerCase();
+  const generic = 'اسم المستخدم أو كلمة المرور غير صحيحة.';
+  const [u] = await sql`SELECT id, password_hash, failed_logins, locked_until, must_change FROM users WHERE lower(username) = ${username}`;
+  if (!u) { await verifyPassword(password, null); return { ok: false, error: generic }; }
+  if (u.locked_until && new Date(u.locked_until).getTime() > Date.now()) {
+    return { ok: false, error: `محاولات كثيرة. جربي بعد ${LOCK_MINUTES} دقايق.` };
+  }
+  if (!(await verifyPassword(password, u.password_hash))) {
+    await sql`UPDATE users SET failed_logins = failed_logins + 1,
+                locked_until = CASE WHEN failed_logins + 1 >= ${LOCK_AFTER} THEN now() + make_interval(mins => ${LOCK_MINUTES}) ELSE locked_until END
+              WHERE id = ${u.id}`;
+    return { ok: false, error: generic };
+  }
+  const [m] = await sql`SELECT salon_id FROM memberships WHERE user_id = ${u.id} AND active ORDER BY created_at LIMIT 1`;
+  if (!m) return { ok: false, error: 'هذا الحساب موقوف. كلمي صاحبة الصالون.' };
+  await sql`UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ${u.id}`;
+  await startSession(u.id, m.salon_id);
+  return { ok: true, mustChange: u.must_change };
+}
+
 /* ---------------- sessions ---------------- */
 
 export async function startSession(userId: string, salonId: string) {
@@ -118,7 +144,7 @@ export async function getCtx(): Promise<Ctx | null> {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
   const [r] = await sql`
-    SELECT u.id AS user_id, u.name AS user_name, u.phone, s.id AS salon_id, s.name AS salon_name, s.timezone, s.is_demo,
+    SELECT u.id AS user_id, u.name AS user_name, u.phone, u.username, u.must_change, s.id AS salon_id, s.name AS salon_name, s.timezone, s.is_demo,
            m.role, m.staff_id
     FROM sessions se
     JOIN users u ON u.id = se.user_id
@@ -127,16 +153,18 @@ export async function getCtx(): Promise<Ctx | null> {
     WHERE se.token_hash = ${hash(token)} AND se.expires_at > now()`;
   if (!r) return null;
   return {
-    userId: r.user_id, userName: r.user_name, phone: r.phone,
+    userId: r.user_id, userName: r.user_name, phone: r.phone, username: r.username, mustChange: r.must_change,
     salonId: r.salon_id, salonName: r.salon_name, tz: r.timezone,
     role: r.role, staffId: r.staff_id, isDemo: r.is_demo,
   };
 }
 
 /** For pages: the signed-in context, or a redirect to /login (or home if the role may not see this page). */
-export async function requirePage(what?: keyof typeof CAN): Promise<Ctx> {
+export async function requirePage(what?: keyof typeof CAN, opts: { allowMustChange?: boolean } = {}): Promise<Ctx> {
   const ctx = await getCtx();
   if (!ctx) redirect('/login');
+  // a system-made password has to be replaced before anything else
+  if (ctx.mustChange && !opts.allowMustChange && !ctx.isDemo) redirect('/account?first=1');
   if (what && !can(ctx, what)) redirect('/');
   return ctx;
 }

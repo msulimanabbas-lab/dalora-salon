@@ -502,26 +502,100 @@ export async function removeTimeOffAction(id: string): Promise<Result> {
 /* ======================= team & settings ======================= */
 
 const memberInput = z.object({
-  phone: z.string(), name: z.string().trim().min(1).max(60),
+  name: z.string().trim().min(1).max(60),
+  username: z.string().trim().toLowerCase(),
+  phone: z.string().max(20).default(''),
   role: z.enum(['manager', 'reception', 'staff', 'accountant']), staffId: uuid.optional(),
 });
-export async function addMemberAction(input: z.input<typeof memberInput>): Promise<Result> {
+/** Creates a login for someone in the salon. The system makes up the first password and shows it once. */
+export async function addMemberAction(input: z.input<typeof memberInput>): Promise<Result<{ username: string; password: string }>> {
   return guard(async () => {
     const ctx = await requireAction('team');
     const p = memberInput.safeParse(input);
     if (!p.success) return fail('اكتبي الاسم والدور.');
-    const phone = normalizePhone(p.data.phone);
-    if (!phone) return fail('رقم الجوال غير صحيح.');
-    if (p.data.role === 'staff' && !p.data.staffId) return fail('اختاري الموظفة المرتبطة بهالحساب.');
-    await sql.begin(async tx => {
-      const [u] = await tx`INSERT INTO users (phone, name) VALUES (${phone}, ${p.data.name})
-                           ON CONFLICT (phone) DO UPDATE SET name = CASE WHEN users.name = '' THEN EXCLUDED.name ELSE users.name END RETURNING id`;
-      await tx`INSERT INTO memberships (salon_id, user_id, role, staff_id, active)
-               VALUES (${ctx.salonId}, ${u.id}, ${p.data.role}, ${p.data.role === 'staff' ? p.data.staffId! : null}, true)
-               ON CONFLICT (salon_id, user_id) DO UPDATE SET role = EXCLUDED.role, staff_id = EXCLUDED.staff_id, active = true`;
-      await audit(tx, ctx, 'member', u.id, 'added', { role: p.data.role });
-    });
+    const d = p.data;
+    const { validUsername, generatePassword, hashPassword } = await import('@/lib/password');
+    if (!validUsername(d.username)) return fail('اسم المستخدم بالإنجليزي، من 3 خانات، حروف وأرقام ونقطة بس (مثل: reem.reception).');
+    const phone = d.phone.trim() ? normalizePhone(d.phone) : null;
+    if (d.phone.trim() && !phone) return fail('رقم الجوال غير صحيح.');
+    if (d.role === 'staff' && !d.staffId) return fail('اختاري المختصة المرتبطة بهالحساب.');
+    const [taken] = await sql`SELECT 1 FROM users WHERE lower(username) = ${d.username}`;
+    if (taken) return fail('اسم المستخدم مأخوذ. اختاري غيره.');
+    const password = generatePassword();
+    const hash = await hashPassword(password);
+    try {
+      await sql.begin(async tx => {
+        const [u] = phone
+          ? await tx`INSERT INTO users (phone, name, username, password_hash, must_change) VALUES (${phone}, ${d.name}, ${d.username}, ${hash}, true)
+                     ON CONFLICT (phone) DO UPDATE SET username = COALESCE(users.username, EXCLUDED.username),
+                       password_hash = CASE WHEN users.username IS NULL THEN EXCLUDED.password_hash ELSE users.password_hash END,
+                       must_change = CASE WHEN users.username IS NULL THEN true ELSE users.must_change END
+                     RETURNING id, username`
+          : await tx`INSERT INTO users (name, username, password_hash, must_change) VALUES (${d.name}, ${d.username}, ${hash}, true) RETURNING id, username`;
+        if (u.username !== d.username) throw new UserError('هالرقم عنده حساب من قبل باسم مستخدم ' + u.username + '.');
+        await tx`INSERT INTO memberships (salon_id, user_id, role, staff_id, active)
+                 VALUES (${ctx.salonId}, ${u.id}, ${d.role}, ${d.role === 'staff' ? d.staffId! : null}, true)
+                 ON CONFLICT (salon_id, user_id) DO UPDATE SET role = EXCLUDED.role, staff_id = EXCLUDED.staff_id, active = true`;
+        await audit(tx, ctx, 'member', u.id, 'added', { role: d.role, username: d.username });
+      });
+    } catch (e) { if (e instanceof UserError) return fail(e.message); throw e; }
     refresh();
+    return { ok: true, username: d.username, password };
+  });
+}
+
+/** Owner gives someone a fresh password (forgot it, or a new device). Shown once. */
+export async function resetPasswordAction(membershipId: string): Promise<Result<{ username: string; password: string }>> {
+  return guard(async () => {
+    const ctx = await requireAction('team');
+    if (!uuid.safeParse(membershipId).success) return fail('غير موجود');
+    const [m] = await sql`SELECT u.id, u.username, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.id = ${membershipId} AND m.salon_id = ${ctx.salonId}`;
+    if (!m) return fail('غير موجود');
+    if (m.id === ctx.userId) return fail('غيّري كلمة مرورك من صفحة حسابي.');
+    const { generatePassword, hashPassword, validUsername } = await import('@/lib/password');
+    let username = m.username as string | null;
+    if (!username) { // older phone-only account: give it a username too
+      const base = 'user' + String(Date.now()).slice(-6);
+      username = validUsername(base) ? base : 'user' + Math.random().toString(36).slice(2, 8);
+    }
+    const password = generatePassword();
+    await sql`UPDATE users SET username = ${username}, password_hash = ${await hashPassword(password)}, must_change = true, failed_logins = 0, locked_until = NULL WHERE id = ${m.id}`;
+    await sql`DELETE FROM sessions WHERE user_id = ${m.id}`;
+    await audit(sql, ctx, 'member', m.id, 'password_reset');
+    return { ok: true, username, password };
+  });
+}
+
+export async function passwordLoginAction(username: string, password: string): Promise<Result> {
+  const { passwordLogin } = await import('@/lib/auth');
+  if (!username.trim() || !password) return fail('اكتبي اسم المستخدم وكلمة المرور.');
+  const r = await passwordLogin(username, password.slice(0, 200));
+  if (!r.ok) return r;
+  redirect(r.mustChange ? '/account?first=1' : '/');
+}
+
+/** Change your own password; an account that signed in by phone and has no username yet picks one here. */
+export async function changePasswordAction(current: string, next: string, newUsername?: string): Promise<Result> {
+  return guard(async () => {
+    const ctx = await getCtx();
+    if (!ctx) return fail('سجّلي الدخول.');
+    if (ctx.isDemo) return fail('الحساب التجريبي ما تتغير كلمة مروره.');
+    const { verifyPassword, hashPassword, passwordProblem, validUsername } = await import('@/lib/password');
+    const problem = passwordProblem(next);
+    if (problem) return fail(problem);
+    const [u] = await sql`SELECT password_hash, username FROM users WHERE id = ${ctx.userId}`;
+    if (u.password_hash && !(await verifyPassword(current, u.password_hash))) return fail('كلمة المرور الحالية غير صحيحة.');
+    if (u.password_hash && current === next) return fail('اختاري كلمة مرور جديدة غير الحالية.');
+    let username = u.username as string | null;
+    if (!username) {
+      const want = (newUsername || '').trim().toLowerCase();
+      if (!validUsername(want)) return fail('اختاري اسم مستخدم بالإنجليزي، من 3 خانات، حروف وأرقام ونقطة.');
+      const [taken] = await sql`SELECT 1 FROM users WHERE lower(username) = ${want}`;
+      if (taken) return fail('اسم المستخدم مأخوذ. اختاري غيره.');
+      username = want;
+    }
+    await sql`UPDATE users SET username = ${username}, password_hash = ${await hashPassword(next)}, must_change = false WHERE id = ${ctx.userId}`;
+    await audit(sql, ctx, 'member', ctx.userId, 'password_changed');
     return { ok: true };
   });
 }
